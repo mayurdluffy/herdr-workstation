@@ -62,6 +62,7 @@ export default class GitGraph extends View {
     this.range = null;
     this.signature = null;
     this.folder = null;
+    this.space = null;       // the space this.folder was shown for
     this.height = 0;
     this.width = 0;
     this.scope = "all";      // "all" | "current" | a ref name
@@ -79,10 +80,11 @@ export default class GitGraph extends View {
   target() {
     const fixed = props()?.folder;
     if (fixed) return fixed;
-    const f = focused();
+    const f = focused(), space = spaces().find((s) => s.active);
     const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-    // A mod pane or panel has no folder: keep the last one, else the space's.
-    return (pane?.terminal ? pane.cwd : f?.terminal ? f.cwd : null) ?? this.folder ?? spaces().find((s) => s.active)?.folder ?? null;
+    // A mod pane or panel has no folder: keep this space's last one, else the space's own.
+    const last = this.space === space?.id ? this.folder : null;
+    return (pane?.terminal ? pane.cwd : f?.terminal ? f.cwd : null) ?? last ?? space?.folder ?? null;
   }
 
   git(args) {
@@ -114,15 +116,16 @@ export default class GitGraph extends View {
   setScope(scope, cx) { this.scope = scope; this.selected = null; this.detail = []; this.range = null; this.refresh(cx); }
   toggleRemotes(cx) { this.remotesShown = !this.remotesShown; this.refresh(cx); }
 
-  refresh(cx) {
-    const folder = this.target();
-    if (!folder) { this.error = "Focus a terminal in a git repository"; cx.notify(); return; }
+  // From render, pass rendering: notifying then throws (and would leave loading stuck).
+  refresh(cx, rendering = false) {
+    const folder = this.target(), space = spaces().find((s) => s.active)?.id ?? null;
+    if (!folder) { this.error = "Focus a terminal in a git repository"; if (!rendering) cx.notify(); return; }
     this.loading = true;
-    cx.notify();
+    if (!rendering) cx.notify();
     cx.spawn(async (cx) => {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder });
-        this.folder = folder;
+        this.folder = folder; this.space = space;
         if (top.code !== 0) { this.root = null; this.rows = []; this.error = `Not a git repository: ${folder}`; return; }
         const root = top.stdout.trim();
         if (root !== this.root) { this.selected = null; this.detail = []; this.range = null; this.scope = "all"; }
@@ -312,7 +315,7 @@ export default class GitGraph extends View {
   render(cx) {
     const t = theme();
     const want = this.target();
-    if (!this.loading && want && want !== this.folder && !props()?.folder) this.refresh(cx);
+    if (!this.loading && want && want !== this.folder && !props()?.folder) this.refresh(cx, true);
     const mono = settings().font_family ?? "JetBrains Mono";
     const palette = this.palette();
     const graphW = Math.max(36, this.graph?.width ?? 36);

@@ -60,6 +60,7 @@ export default class Review extends View {
     this.root = null;
     this.on = null;
     this.cwd = null;
+    this.space = null;      // the space this.cwd was shown for
     this.files = [];
     this.open = null;       // path
     this.diff = null;       // parseDiff result for the open file
@@ -85,7 +86,9 @@ export default class Review extends View {
   location() {
     const space = spaces().find((s) => s.active), f = focused();
     const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-    return { cwd: (pane?.terminal ? pane.cwd : null) ?? (f?.terminal ? f.cwd : null) ?? this.cwd ?? space?.folder ?? null, on: space?.machine ?? null };
+    // A mod pane or panel has no folder: keep this space's last one, else the space's own.
+    const last = this.space === space?.id ? this.cwd : null;
+    return { cwd: (pane?.terminal ? pane.cwd : null) ?? (f?.terminal ? f.cwd : null) ?? last ?? space?.folder ?? null, on: space?.machine ?? null, space: space?.id ?? null };
   }
 
   git(args) {
@@ -94,13 +97,13 @@ export default class Review extends View {
 
   refresh(cx) {
     if (this.loading) return;
-    const { cwd, on } = this.location();
+    const { cwd, on, space } = this.location();
     if (!cwd) { this.error = "Focus a terminal in a git repository"; cx.notify(); return; }
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-        this.cwd = cwd;
+        this.cwd = cwd; this.space = space;
         if (top.code !== 0) { this.root = null; this.files = []; this.error = "Not a git repository"; return; }
         const root = top.stdout.trim();
         if (root !== this.root) { this.open = null; this.diff = null; this.range = null; this.key = null; }
