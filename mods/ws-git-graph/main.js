@@ -1,13 +1,13 @@
 // @ts-check
-// Git graph pane: props { folder? } (else the focused terminal's folder). Every branch's
+// Git graph pane: props { folder?, commit? } (else the focused terminal's folder). Every branch's
 // commits as a graph with refs; click one for its stat and diff, review it in plannotator
 // or send it to the agent beside this pane.
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
+import { v_flex, h_flex } from "gpui-base";
 import { exec, theme, props, focused, panes, agents, settings, notify, window } from "herdr";
 
 const SEP = "\x1f";
-const LIMIT = 500;
+const LIMIT = 300;
 const ROW = 22;
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "color.ui=never"];
 const LANE_COLORS = ["ansi4", "ansi5", "ansi2", "ansi3", "ansi6", "ansi1", "ansi12", "ansi13", "ansi10", "ansi11"];
@@ -32,6 +32,7 @@ export default class GitGraph extends View {
     this.detail = [];       // lines of `git show`
     this.signature = null;  // refs + HEAD, to notice new commits
     this.folder = null;
+    this.height = 0;        // px, from on_size_change: virtual lists need a definite height
     this.refresh(cx);
     cx.timer.every(4000, (cx) => this.poll(cx));
   }
@@ -85,6 +86,9 @@ export default class GitGraph extends View {
         this.branch = b.stdout.trim() || "detached HEAD";
         this.signature = await this.signatureNow();
         this.error = this.rows.length ? null : "No commits yet";
+        // props.commit: open with that commit selected (once).
+        const want = props()?.commit;
+        if (want && !this.opened) { this.opened = true; const row = this.rows.find((r) => r.sha && want.startsWith(r.sha)); if (row) this.pick(row.sha, cx); }
       } catch (e) {
         this.error = String(e?.message ?? e);
       } finally {
@@ -103,8 +107,8 @@ export default class GitGraph extends View {
       const r = await this.git(["show", "--stat", "--patch", "--no-ext-diff", "--format=%H%n%an <%ae>  ·  %ad%n%n%B", sha]);
       if (this.selected !== sha) return;
       const lines = (r.code === 0 ? r.stdout : r.stderr).replace(/\n$/, "").split("\n");
-      this.detail = lines.slice(0, 3000).map((l) => (l.length > 2000 ? l.slice(0, 2000) + "…" : l));
-      if (lines.length > 3000) this.detail.push(`… ${lines.length - 3000} more lines`);
+      this.detail = lines.slice(0, 1500).map((l) => (l.length > 2000 ? l.slice(0, 2000) + "…" : l));
+      if (lines.length > 1500) this.detail.push(`… ${lines.length - 1500} more lines (Review in plannotator shows all of it)`);
       cx.notify();
     });
   }
@@ -156,7 +160,7 @@ export default class GitGraph extends View {
 
   row(r, i, t) {
     const on = r.sha && r.sha === this.selected;
-    return h_flex().id(`gg-${i}`).h(ROW).flex_none().px(10).gap(8).items_center().when(Boolean(r.sha), (e) => e.cursor_pointer()
+    return h_flex().id(`gg-${i}`).w_full().h(ROW).flex_none().px(10).gap(8).items_center().when(Boolean(r.sha), (e) => e.cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(r.sha, cx)))
       .when(Boolean(on), (e) => e.bg(t.selected))
       .child(h_flex().flex_none().items_center().children(this.graphCells(r.graph, t)))
@@ -170,7 +174,7 @@ export default class GitGraph extends View {
 
   detailRow(line, i, t) {
     const kind = line.startsWith("+++") || line.startsWith("---") ? "file" : line[0];
-    return div().id(`gd-${i}`).h(ROW - 2).flex_none().px(12).truncate()
+    return div().id(`gd-${i}`).w_full().h(ROW - 2).flex_none().px(12).truncate()
       .when(kind === "+", (e) => e.bg(t.ansi2 + "18").text_color(t.ansi2))
       .when(kind === "-", (e) => e.bg(t.ansi1 + "18").text_color(t.ansi1))
       .when(kind === "@", (e) => e.bg(t.raised).text_color(t.dim))
@@ -188,32 +192,34 @@ export default class GitGraph extends View {
     const want = this.target();
     if (!this.loading && want && want !== this.folder && !props()?.folder) this.refresh(cx);
     const mono = settings().font_family ?? "JetBrains Mono";
+    const body = Math.max(0, this.height - 37);                 // below the header and its border
+    const detailH = this.selected ? Math.floor(body / 2) : 0;
+    const listH = Math.max(ROW, body - detailH);
     const repo = this.root ? this.root.split("/").pop() : "Git graph";
+    const count = this.rows.filter((r) => r.sha).length;
     const header = h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
       .child(div().font_semibold().child(repo))
       .when(Boolean(this.branch), (e) => e.child(div().px(5).rounded(4).bg(t.raised).text_size(11).text_color(t.accent).child(this.branch)))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : `${this.rows.filter((r) => r.sha).length} commits${this.rows.filter((r) => r.sha).length >= LIMIT ? " (latest)" : ""}`))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : `${count} commits${count >= LIMIT ? " (latest)" : ""}`))
       .child(this.button("gg-refresh", "Refresh", (cx) => this.refresh(cx), t));
+    // Plain scroll areas with explicit heights: a virtual list never rendered its rows in a pane.
     const list = this.error && !this.rows.length
       ? div().p(16).text_color(t.dim).child(this.error)
-      : div().flex_1().min_h(0).relative().font_family(mono).text_size(12)
-        .child(v_virtual_list("gg-list", this.rows.length, ROW, (i) => String(i),
-          (range) => this.rows.slice(range.start, range.end).map((r, k) => this.row(r, range.start + k, t))).size_full())
-        .child(Scrollbar.vertical("gg-list").viewport_from_layout().absolute().inset_0());
+      : div().id("gg-list").w_full().h(listH).flex_none().overflow_y_scrollbar().font_family(mono).text_size(12)
+        .child(v_flex().w_full().children(this.rows.map((r, i) => this.row(r, i, t))));
     const detail = this.selected
-      ? v_flex().h_1_2().flex_none().min_h(0).border_t(1).border_color(t.border)
+      ? v_flex().w_full().h(detailH).flex_none().border_t(1).border_color(t.border)
         .child(h_flex().h(32).flex_none().px(12).gap(6).items_center().border_b(1).border_color(t.border)
           .child(div().font_semibold().child(this.selected))
           .child(div().flex_1())
           .child(this.button("gg-review", "Review in plannotator", (cx) => this.review(cx), t))
           .child(this.button("gg-send", "Send to agent", (cx) => this.send(cx), t))
           .child(this.button("gg-close", "Close", (cx) => this.pick(this.selected, cx), t)))
-        .child(div().flex_1().min_h(0).relative().font_family(mono).text_size(12)
-          .child(v_virtual_list("gg-detail", this.detail.length, ROW - 2, (i) => String(i),
-            (range) => this.detail.slice(range.start, range.end).map((l, k) => this.detailRow(l, range.start + k, t))).size_full())
-          .child(Scrollbar.vertical("gg-detail").viewport_from_layout().absolute().inset_0()))
+        .child(div().id("gg-detail").w_full().h(Math.max(0, detailH - 33)).flex_none().overflow_y_scrollbar().font_family(mono).text_size(12)
+          .child(v_flex().w_full().children(this.detail.map((l, i) => this.detailRow(l, i, t)))))
       : null;
-    return v_flex().id("ws-git-graph").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12.5)
+    return v_flex().id("ws-git-graph").size_full().min_h(0).overflow_hidden().bg(t.background)
+      .on_size_change((size, cx) => { this.height = size.height / (Number(settings().zoom) || 1); cx.notify(); }).text_color(t.foreground).text_size(12.5)
       .child(header).child(list).when(detail !== null, (e) => e.child(detail));
   }
 }

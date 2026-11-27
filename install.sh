@@ -139,6 +139,8 @@ if [ "$BROWSER" = 1 ]; then
     HERDR_APP_HOME="$APP_HOME" "$BIN" install-agents || warn "install-agents failed"
   fi
   record "browser"
+elif grep -qx browser "$MANIFEST" 2>/dev/null; then
+  record "browser"   # installed earlier: keep it in the manifest so uninstall still removes it
 fi
 
 # ---------- 5. keys ----------
