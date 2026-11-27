@@ -51,7 +51,7 @@ test("parseStatus and parseBranch read git status -z -b", () => {
     ["a.txt", true, false, false, false, false],
     ["b.txt", false, true, false, false, false],
     ["c.txt", true, false, true, false, false],
-    ["d.txt", true, true, false, true, false],
+    ["d.txt", true, false, false, true, false],
     ["e.txt", false, true, false, false, true],
   ]);
   assert.deepEqual(parseBranch(out), { branch: "main", upstream: "origin/main", ahead: 2, behind: 1 });
@@ -129,6 +129,14 @@ test("fullView: the whole file, with a hunk header where each -U3 hunk starts", 
   assert.equal(rows.filter((r) => r.kind !== "@").length, 22, "every line of the file, the removed one too");
   const heads = rows.map((r, i) => [r, i]).filter(([r]) => r.kind === "@");
   assert.deepEqual(heads.map(([r]) => r.hunk), [0, 1]);
-  assert.equal(rows[heads[0][1] + 1].text, "line 1", "first hunk header right before line 1");
-  assert.equal(rows[heads[1][1] + 1].text, "line 13", "second hunk header right before its first context line");
+  assert.equal(rows[heads[0][1] + 1].text, "line 2", "first hunk's bar right above its first changed line");
+  assert.equal(rows[heads[1][1] + 1].text, "inserted", "second hunk's bar right above its first changed line, not its context");
+});
+
+test("letter: what each list shows for a file, as VS Code does", async () => {
+  const { letter } = await import("../mods/ws-review/main.js");
+  const files = parseStatus("MM a\0A  b\0?? c\0 D d\0D  e\0UU f\0");
+  const show = (staged) => files.filter((f) => (staged ? f.accepted : f.pending)).map((f) => `${f.path}:${letter(f, staged)}`);
+  assert.deepEqual(show(true), ["a:M", "b:A", "e:D"], "staged: the index's change; a partly staged file too");
+  assert.deepEqual(show(false), ["a:M", "c:U", "d:D", "f:!"], "changes: the working tree's; untracked is U, a conflict !");
 });

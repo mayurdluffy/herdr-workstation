@@ -1,5 +1,5 @@
 // Workstation tab bar: Herdr's shipped `tabs` mod (Apache-2.0) plus the Graph
-// and Comments panel buttons; our Changes (ws-review, with Accept/Reject)
+// and Comments panel buttons; our Changes (ws-review, Source Control with Stage/Unstage)
 // replaces Herdr's own Changes panel. Only the marked parts differ.
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";

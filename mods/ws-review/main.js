@@ -3,15 +3,17 @@
 // The top: the "…" menu (pull, push, branches, stash, tags and the rest, in ws-git),
 // the branch with Sync, a commit message (⌘Enter commits) and the
 // Commit button with its drop-down. Then the uncommitted changes, as a list or a tree:
-// Accept stages a file or hunk, Reject restores it (a new file is deleted, after a second
-// click); accepted files wait under Accepted until you commit. Click a line, shift-click
+// The files are in two lists, as VS Code has them: Staged Changes (what the commit takes) and
+// Changes (the rest; a partly staged file is in both). A row's icons: Open File (in Files),
+// Discard Changes (a new file is deleted, after a second click), Stage (+), Unstage (−);
+// each list's header does it for all. In a diff, Stage / Discard / Unstage hunk. Click a line, shift-click
 // another, Comment: the comment goes to the tray with its file and lines. Every git request (from here, the menus or their dialogs) runs here, one at a
 // time, and is logged for Show Git Output.
 // A file's diff shows the whole file with its changes in place (or only the hunks), marks the
 // changed words, wraps long lines, and can be shown side by side.
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
-import { exec, theme, settings, focused, panes, spaces, agents, layout, window, notify, openOverlay, appHome, writeTextFile, readTextFile, shared, setShared } from "herdr";
+import { v_flex, h_flex, TextareaState, Textarea, ScrollHandle } from "gpui-base";
+import { exec, theme, settings, focused, panes, spaces, agents, layout, window, notify, openOverlay, appHome, writeTextFile, readTextFile, shared, setShared, run } from "herdr";
 import { REQUEST, CLAIM, LOG, MENU, post, view, openDialog, moreMenu, commitMenu, menuSize, commitOptions, planCommit, pushSteps } from "./git-actions.js";
 import { markWords, sideBySide } from "./diff-words.js";
 
@@ -29,7 +31,8 @@ function find(node, id) {
   return null;
 }
 
-/** `git status --porcelain=v1 -z` → [{ path, pending, accepted, fresh, deleted, conflict }]. */
+/** `git status --porcelain=v1 -z` → [{ path, x, y, pending, accepted, fresh, deleted, conflict }].
+ *  `accepted`: staged (in Staged Changes); `pending`: changed since staged, untracked or in conflict (in Changes). */
 export function parseStatus(out) {
   const files = [];
   for (const entry of out.split("\0").filter(Boolean)) {
@@ -37,7 +40,7 @@ export function parseStatus(out) {
     const x = entry[0], y = entry[1], path = entry.slice(3);
     const fresh = x === "?" && y === "?";
     const conflict = x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D");
-    files.push({ path, fresh, conflict, pending: fresh || y !== " ", accepted: !fresh && x !== " ", deleted: x === "D" || y === "D" });
+    files.push({ path, x, y, fresh, conflict, pending: fresh || y !== " ", accepted: !fresh && !conflict && x !== " ", deleted: x === "D" || y === "D" });
   }
   return files;
 }
@@ -100,8 +103,9 @@ export const WHOLE = 1000000;
 
 /**
  * The whole file with its changes in place: the rows of a diff made with WHOLE context
- * (`full`), with a header row put back where each of the -U3 diff's hunks (`hunks`,
- * the ones Accept/Reject hunk apply) begins.
+ * (`full`), with a header row for each of the -U3 diff's hunks (`hunks`, the ones
+ * Stage / Unstage / Discard hunk apply) right above that hunk's first changed line, so its
+ * actions sit next to the change rather than three context lines above it.
  */
 export function fullView(full, hunks) {
   const starts = hunks.map((hk) => {
@@ -110,18 +114,29 @@ export function fullView(full, hunks) {
   });
   const out = [];
   let h = 0;
+  /** @type {any[]} hunks started, waiting for their first changed line */
+  const waiting = [];
   const header = (st) => ({ kind: "@", text: st.hk.header, hunk: st.hk.index });
   for (const r of full.rows) {
     if (r.kind === "@") continue;
     // A hunk starts at its first line: old line `old` and new line `neu` (an added line has no old number).
-    while (h < starts.length && r.newN === starts[h].neu && (r.kind === "+" || r.oldN === starts[h].old)) out.push(header(starts[h++]));
+    while (h < starts.length && r.newN === starts[h].neu && (r.kind === "+" || r.oldN === starts[h].old)) waiting.push(starts[h++]);
+    if (waiting.length && (r.kind === "+" || r.kind === "-")) out.push(...waiting.splice(0).map(header));
     out.push(r);
   }
+  out.push(...waiting.map(header));
   while (h < starts.length) out.push(header(starts[h++]));
   return out;
 }
 
 const mark = (f) => (f.conflict ? "U" : f.fresh ? "A" : f.deleted ? "D" : "M");
+/** The letter VS Code shows for a file in a list: the index's change (staged) or the working tree's. */
+export function letter(f, staged) {
+  if (f.conflict) return "!";
+  if (staged) return f.x === "A" ? "A" : f.x === "D" ? "D" : f.x === "R" ? "R" : "M";
+  return f.fresh ? "U" : f.y === "D" ? "D" : "M";
+}
+const letterColor = (l) => markColor(l === "!" ? "U" : l === "U" || l === "A" ? "A" : l === "D" ? "D" : "M");
 // VS Code's git decoration colors (its default dark and light themes), as the Files panel uses.
 const GIT_COLORS = {
   dark: { A: "#73C991", M: "#E2C08D", D: "#C74E39", U: "#E4676B" },
@@ -188,6 +203,10 @@ export default class Review extends View {
     this.head = { branch: null, upstream: null, ahead: 0, behind: 0 };
     this.remotes = [];
     this.open = null;       // path
+    this.openStaged = false; // the open file's staged diff (Staged Changes) or the working tree's (Changes)
+    this.hot = null;        // the row under the pointer: its icons show
+    this.scroll = ScrollHandle.new(); // the diff's position: a newly opened file goes to its first change
+    this.toFirst = false;
     this.diff = null;       // parseDiff result for the open file
     this.range = null;      // { from, to } row indexes
     this.error = null;
@@ -256,12 +275,21 @@ export default class Review extends View {
         const st = await this.git(["status", "--porcelain=v1", "-z", "-b", "--no-renames", "--untracked-files=all"]);
         if (st.code !== 0) throw new Error(st.stderr.trim());
         this.files = parseStatus(st.stdout);
+        this.noCommits = /^## (?:No commits yet|Initial commit) on /.test(st.stdout);
         this.head = parseBranch(st.stdout);
         const rm = await this.git(["remote"]);
         this.remotes = rm.code === 0 ? rm.stdout.split("\n").filter(Boolean) : [];
         this.error = null;
-        if (this.open && !this.files.some((f) => f.path === this.open)) { this.open = null; this.diff = null; this.range = null; }
-        if (!this.open) this.open = this.files.find((f) => f.pending)?.path ?? this.files[0]?.path ?? null;
+        // The open file left its list (staged, unstaged, committed): show it in the other, else the first file.
+        const inList = (path, staged) => this.files.some((f) => f.path === path && (staged ? f.accepted : f.pending));
+        if (this.open && !inList(this.open, this.openStaged)) {
+          if (inList(this.open, !this.openStaged)) this.openStaged = !this.openStaged; else this.open = null;
+          this.diff = null; this.range = null;
+        }
+        if (!this.open) {
+          const first = this.files.find((f) => f.accepted) ?? this.files.find((f) => f.pending);
+          this.open = first?.path ?? null; this.openStaged = Boolean(first?.accepted); this.toFirst = true;
+        }
         if (this.open && (st.stdout !== this.key || !this.diff)) await this.load(this.open);
         this.key = st.stdout;
       } catch (e) {
@@ -280,21 +308,22 @@ export default class Review extends View {
     const f = this.file(path);
     if (!f) return;
     let text = "";
-    if (f.fresh) {
+    const staged = this.openStaged;
+    if (f.fresh && !staged) {
       const body = await readTextFile(`${this.root}/${path}`, { on: this.on }).catch(() => null);
       if (body !== null && !body.includes("\0")) {
         const lines = body.replace(/\n$/, "").split("\n");
         text = `@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join("\n")}`;
       }
     } else {
-      // Pending files show what isn't accepted yet; accepted-only files show what was staged.
-      const args = (u) => (f.pending ? ["diff", "--no-ext-diff", "--no-textconv", `-U${u}`, "--", path] : ["diff", "--cached", "--no-ext-diff", "--no-textconv", `-U${u}`, "--", path]);
+      // Staged Changes: HEAD to the index. Changes: the index to the working tree.
+      const args = (u) => ["diff", ...(staged ? ["--cached"] : []), "--no-ext-diff", "--no-textconv", `-U${u}`, "--", path];
       const r = await this.git(args(3));
       text = r.code === 0 ? r.stdout : "";
-      // The whole file around the changes; the -U3 hunks stay what Accept/Reject hunk apply.
+      // The whole file around the changes; the -U3 hunks stay what the hunk actions apply.
       if (this.whole && text) {
         const all = await this.git(args(WHOLE));
-        if (this.open !== path) return;
+        if (this.open !== path || this.openStaged !== staged) return;
         if (all.code === 0 && all.stdout) {
           const d = parseDiff(text);
           this.diff = this.shape({ ...d, rows: fullView(parseDiff(all.stdout), d.hunks) });
@@ -302,7 +331,7 @@ export default class Review extends View {
         }
       }
     }
-    if (this.open !== path) return;
+    if (this.open !== path || this.openStaged !== staged) return;
     this.diff = this.shape(parseDiff(text));
   }
 
@@ -324,9 +353,9 @@ export default class Review extends View {
     return d;
   }
 
-  pick(path, cx) {
-    this.full = false;
-    this.open = path; this.diff = null; this.range = null; this.confirm = null;
+  pick(path, staged, cx) {
+    this.full = false; this.toFirst = true;
+    this.open = path; this.openStaged = staged; this.diff = null; this.range = null; this.confirm = null;
     cx.spawn(async (cx) => { await this.load(path); cx.notify(); });
     cx.notify();
   }
@@ -392,7 +421,7 @@ export default class Review extends View {
     }
   }
 
-  /** Commits (or a drop-down variant). A missing message or nothing accepted asks in a dialog. */
+  /** Commits (or a drop-down variant). A missing message or nothing staged asks in a dialog. */
   commit(id, cx) {
     if (this.op || Date.now() - this.sentAt < 600) return;
     const opts = commitOptions(id), ctx = this.ctx();
@@ -465,29 +494,42 @@ export default class Review extends View {
     });
   }
 
-  accept(path, cx) { this.act("Accept", [["add", "--", path]], cx); }
-  unaccept(path, cx) { this.act("Unaccept", [["restore", "--staged", "--", path]], cx); }
+  // Unstaging before the first commit has no HEAD to restore from: take the files out of the index.
+  unstageArgs(paths) { return this.head.branch && this.noCommits ? ["rm", "-q", "--cached", "--", ...paths] : ["restore", "--staged", "--", ...paths]; }
 
-  reject(path, cx) {
+  stage(path, cx) { this.act("Stage", [["add", "-A", "--", path]], cx); }
+  unstage(path, cx) { this.act("Unstage", [this.unstageArgs([path])], cx); }
+
+  /** Discard a file's unstaged changes (back to what's staged); a new file is deleted. Asks once. */
+  discard(path, cx) {
     const f = this.file(path);
     if (!f) return;
     if (this.confirm !== path) { this.confirm = path; cx.notify(); return; }
-    if (f.fresh) this.act("Reject", [["clean", "-f", "--", path]], cx);
-    else this.act("Reject", [["restore", "--worktree", "--", path]], cx);
+    if (f.fresh) this.act("Discard", [["clean", "-f", "--", path]], cx);
+    else this.act("Discard", [["restore", "--worktree", "--", path]], cx);
   }
 
-  acceptAll(cx) {
+  stageAll(cx) {
     const paths = this.files.filter((f) => f.pending).map((f) => f.path);
-    if (paths.length) this.act("Accept all", [["add", "--", ...paths]], cx);
+    if (paths.length) this.act("Stage all", [["add", "-A", "--", ...paths]], cx);
   }
 
-  unacceptAll(cx) {
+  unstageAll(cx) {
     const paths = this.files.filter((f) => f.accepted).map((f) => f.path);
-    if (paths.length) this.act("Unaccept all", [["restore", "--staged", "--", ...paths]], cx);
+    if (paths.length) this.act("Unstage all", [this.unstageArgs(paths)], cx);
+  }
+
+  /** Open File: the Files panel shows it (ws-files takes "ws.files.open"). */
+  openFile(path) {
+    if (!this.root) return;
+    setShared("ws.files.open", { path: `${this.root}/${path}`, at: Date.now() });
+    run("layout.select", { stack: "panel-body", child: "files" });
+    run("layout.show", { id: "panel" });
   }
 
   // A hunk as a patch git can apply: the file's header plus that hunk.
-  hunkStep(index, reverse) {
+  // mode: "stage" (into the index), "discard" (out of the working tree), "unstage" (out of the index).
+  hunkStep(index, mode) {
     return async () => {
       const d = this.diff, hunk = d?.hunks[index];
       if (!hunk) return { code: 1, stdout: "", stderr: "That hunk changed; try again" };
@@ -496,7 +538,8 @@ export default class Review extends View {
       const file = `${dir}/hunk-${Date.now()}.patch`;
       await exec("mkdir", ["-p", dir]);
       await writeTextFile(file, patch, null);
-      const r = await this.git(reverse ? ["apply", "--reverse", "--recount", file] : ["apply", "--cached", "--recount", file]);
+      const how = { stage: ["--cached"], discard: ["--reverse"], unstage: ["--cached", "--reverse"] }[mode];
+      const r = await this.git(["apply", ...how, "--recount", file]);
       await exec("rm", ["-f", file]);
       return r;
     };
@@ -522,13 +565,13 @@ export default class Review extends View {
     const lines = nums.length ? (lo === hi ? `${lo}` : `${lo}-${hi}`) : "";
     const quoted = rows.map((r) => `${r.kind === "\\" || r.kind === " " ? " " : r.kind}${r.text}`).join("\n");
     openOverlay({ mod: "ws-comment", kind: "dialog", width: 560,
-      props: { source: "diff", where: `${path}${lines ? `:${lines}` : ""} (uncommitted change)`, quote: quoted, agent: this.agent()?.address } });
+      props: { source: "diff", where: `${path}${lines ? `:${lines}` : ""} (${this.openStaged ? "staged" : "uncommitted"} change)`, quote: quoted, agent: this.agent()?.address } });
   }
 
 
   // ---------- drawing ----------
 
-  // `col`: a fixed-width column (1: Accept, 2: Reject or Unaccept), so a section's buttons
+  // `col`: a fixed-width column (1: 76px, 2: 90px), so a section's buttons
   // line up with its rows' whatever the labels.
   btn(id, label, onClick, t, tone, col = 0) {
     const color = tone === "ok" ? t.ansi2 : tone === "bad" ? t.ansi1 : t.muted;
@@ -553,20 +596,35 @@ export default class Review extends View {
     if (m?.open) setShared(MENU, { ...m, open: false, at: Date.now() });
   }
 
-  fileRow(f, t, depth, tree) {
-    const on = this.open === f.path;
+  /** A row's or a list header's icon action, as VS Code shows them. */
+  iconBtn(id, icon, tip, onClick, t, tone = null) {
+    const color = tone === "bad" ? t.ansi1 : t.muted;
+    return div().id(id).size(22).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(color)
+      .hover((s) => s.bg(t.hover).text_color(tone === "bad" ? t.ansi1 : t.foreground)).tooltip(tip)
+      .on_click((_e, cx) => { cx.stop_propagation(); onClick(cx); }).child(svg(ICON(icon)).size(15));
+  }
+
+  /** A file in Staged Changes (`staged`) or Changes: its icons show on hover and while it's open. */
+  fileRow(f, t, depth, tree, staged) {
+    const key = `${staged ? "s" : "c"}:${f.path}`;
+    const on = this.open === f.path && this.openStaged === staged;
+    const confirming = !staged && this.confirm === f.path;
+    const show = on || this.hot === key || confirming;
     const parts = f.path.split("/"), name = parts.pop();
-    const m = mark(f), color = markColor(m);
-    return h_flex().id(`rv-${f.path}`).h(FILE_H).flex_none().pl(8 + depth * 14).pr(8).gap(6).items_center().rounded(6).cursor_pointer()
-      .when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+    const l = letter(f, staged), color = letterColor(l), deleted = l === "D";
+    return h_flex().id(`rv-${key}`).h(FILE_H).flex_none().pl(8 + depth * 14).pr(8).gap(6).items_center().rounded(6).cursor_pointer()
+      .when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, staged, cx))
+      .on_hover((h, cx) => { const hot = h ? key : this.hot === key ? null : this.hot; if (hot !== this.hot) { this.hot = hot; cx.notify(); } })
       .child(h_flex().flex_1().min_w(0).gap(6).items_center()
-        .child(div().flex_none().max_w(260).truncate().text_color(color).when(f.deleted, (e) => e.line_through()).child(name))
+        .child(div().flex_none().max_w(260).truncate().text_color(color).when(deleted, (e) => e.line_through()).child(name))
         .when(!tree && parts.length > 0, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(parts.join("/")))))
-      .when(f.pending, (e) => e
-        .child(this.btn(`rv-acc-${f.path}`, "Accept", (cx) => this.accept(f.path, cx), t, "ok", 1))
-        .child(this.btn(`rv-rej-${f.path}`, this.confirm === f.path ? (f.fresh ? "Delete file?" : "Discard?") : "Reject", (cx) => this.reject(f.path, cx), t, "bad", 2)))
-      .when(!f.pending, (e) => e.child(this.btn(`rv-un-${f.path}`, "Unaccept", (cx) => this.unaccept(f.path, cx), t, null, 2)))
-      .child(div().w(12).flex_none().text_center().text_size(11).font_medium().text_color(color).child(m));
+      .when(show, (e) => e.child(h_flex().flex_none().gap(1).items_center()
+        .when(!deleted, (e) => e.child(this.iconBtn(`rv-open-${key}`, "open-file", "Open File", () => this.openFile(f.path), t)))
+        .when(confirming, (e) => e.child(this.btn(`rv-discard-${key}`, f.fresh ? "Delete file?" : "Discard?", (cx) => this.discard(f.path, cx), t, "bad")))
+        .when(!staged && !confirming, (e) => e.child(this.iconBtn(`rv-discard-${key}`, "discard", "Discard Changes", (cx) => this.discard(f.path, cx), t)))
+        .when(!staged, (e) => e.child(this.iconBtn(`rv-stage-${key}`, "plus", "Stage Changes", (cx) => this.stage(f.path, cx), t)))
+        .when(staged, (e) => e.child(this.iconBtn(`rv-unstage-${key}`, "minus", "Unstage Changes", (cx) => this.unstage(f.path, cx), t)))))
+      .child(div().w(12).flex_none().text_center().text_size(11).font_medium().text_color(color).child(l));
   }
 
   dirRow(r, t) {
@@ -581,8 +639,9 @@ export default class Review extends View {
   /** One section's rows, as a list or a tree, in the chosen order. */
   rows(files, section, t) {
     const v = view();
-    if (v.mode !== "tree") return sortFiles(files, v.sort).map((f) => this.fileRow(f, t, 0, false));
-    return treeRows(files, v.sort, this.collapsed, section).map((r) => (r.kind === "dir" ? this.dirRow(r, t) : this.fileRow(r.f, t, r.depth, true)));
+    const staged = section === "s";
+    if (v.mode !== "tree") return sortFiles(files, v.sort).map((f) => this.fileRow(f, t, 0, false, staged));
+    return treeRows(files, v.sort, this.collapsed, section).map((r) => (r.kind === "dir" ? this.dirRow(r, t) : this.fileRow(r.f, t, r.depth, true, staged)));
   }
 
   diffRow(r, i, t, f, local) {
@@ -590,9 +649,12 @@ export default class Review extends View {
     if (r.kind === "@") {
       return h_flex().id(`rd-${i}`).w_full().h(ROW + 4).flex_none().px(10).gap(4).items_center().bg(t.raised)
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(r.text))
-        .when(Boolean(f?.pending && !f.fresh && local), (e) => e
-          .child(this.btn(`rh-acc-${i}`, "Accept hunk", (cx) => this.act("Accept hunk", [this.hunkStep(r.hunk, false)], cx), t, "ok"))
-          .child(this.btn(`rh-rej-${i}`, "Reject hunk", (cx) => this.act("Reject hunk", [this.hunkStep(r.hunk, true)], cx), t, "bad")));
+        .when(Boolean(local && f && this.openStaged && f.accepted), (e) => e
+          .child(this.btn(`rh-unstage-${i}`, "Unstage hunk", (cx) => this.act("Unstage hunk", [this.hunkStep(r.hunk, "unstage")], cx), t, null)))
+        .when(Boolean(local && f && !this.openStaged && f.pending && !f.fresh), (e) => e
+          .child(this.btn(`rh-discard-${i}`, "Discard hunk", (cx) => this.act("Discard hunk", [this.hunkStep(r.hunk, "discard")], cx), t, "bad"))
+          .child(div().w(1).h(14).mx(2).flex_none().bg(t.border))
+          .child(this.btn(`rh-stage-${i}`, "Stage hunk", (cx) => this.act("Stage hunk", [this.hunkStep(r.hunk, "stage")], cx), t, "ok")));
     }
     return h_flex().id(`rd-${i}`).w_full().min_h(ROW).flex_none().gap(8).items_start().cursor_pointer()
       .when(r.kind === "+", (e) => e.bg(t.ansi2 + "18")).when(r.kind === "-", (e) => e.bg(t.ansi1 + "18"))
@@ -687,8 +749,9 @@ export default class Review extends View {
     if (!this.loading && loc.cwd && loc.cwd !== this.cwd) this.refresh(cx);
     this.pump(cx);
     const mono = settings().font_family ?? "JetBrains Mono";
-    const pending = this.files.filter((f) => f.pending), accepted = this.files.filter((f) => !f.pending);
-    const pendingRows = this.rows(pending, "p", t), acceptedRows = this.rows(accepted, "a", t);
+    // A partly staged file is in both lists, as in VS Code.
+    const pending = this.files.filter((f) => f.pending), accepted = this.files.filter((f) => f.accepted);
+    const pendingRows = this.rows(pending, "c", t), acceptedRows = this.rows(accepted, "s", t);
     const listRows = pendingRows.length + acceptedRows.length + (accepted.length ? 1 : 0) + (pending.length ? 1 : 0);
     const TOOL = 28;
     const body = Math.max(0, this.height - this.topH - TOOL - (this.range ? 40 : 0));
@@ -698,7 +761,7 @@ export default class Review extends View {
     const local = !this.on;
     // A section's name and count, then its actions laid out like the rows' buttons below
     // (same padding, gap and a blank where the rows have their status letter), so they line up.
-    const section = (label, n, actions) => h_flex().h(28).mt(2).flex_none().px(8).gap(6).items_center()
+    const section = (label, n, actions) => h_flex().h(28).mt(2).flex_none().px(8).gap(1).items_center()
       .child(h_flex().flex_1().min_w(0).gap(6).items_center()
         .child(div().flex_none().text_size(10.5).font_medium().text_color(t.dim).child(label))
         .child(div().flex_none().min_w(18).h(16).px(5).rounded(8).bg(t.raised).text_size(10).text_color(t.muted).flex().items_center().justify_center().child(String(n))))
@@ -706,10 +769,12 @@ export default class Review extends View {
       .child(div().w(12).flex_none());
     const list = div().id("rv-files").w_full().h(listH).flex_none().overflow_y_scrollbar().border_b(1).border_color(t.border)
       .child(v_flex().p(6).w_full()
-        .when(accepted.length > 0, (e) => e.child(section("ACCEPTED · commit when ready", accepted.length, [this.btn("rv-unaccept-all", "Unaccept all", (cx) => this.unacceptAll(cx), t, null, 2)])).children(acceptedRows))
-        .when(pending.length > 0, (e) => e.child(section("TO REVIEW", pending.length, [
-          this.btn("rv-accept-all", "Accept all", (cx) => this.acceptAll(cx), t, "ok", 1),
-          this.btn("rv-reject-all", "Reject all", () => openDialog("discard.all", this.ctx(), "confirm"), t, "bad", 2),
+        .when(accepted.length > 0, (e) => e.child(section("STAGED CHANGES", accepted.length, [
+          this.iconBtn("rv-unstage-all", "minus", "Unstage All Changes", (cx) => this.unstageAll(cx), t),
+        ])).children(acceptedRows))
+        .when(pending.length > 0, (e) => e.child(section("CHANGES", pending.length, [
+          this.iconBtn("rv-discard-all", "discard", "Discard All Changes", () => openDialog("discard.all", this.ctx(), "confirm"), t),
+          this.iconBtn("rv-stage-all", "plus", "Stage All Changes", (cx) => this.stageAll(cx), t),
         ])).children(pendingRows))
         .when(this.files.length === 0, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading && !this.root ? "Loading…" : "No uncommitted changes")))));
     const rows = this.diff?.rows ?? [];
@@ -727,14 +792,25 @@ export default class Review extends View {
       if (this.open) { const p = this.open; cx.spawn(async (cx) => { await this.load(p); cx.notify(); }); }
     };
     const body2 = this.side ? sideBySide(rows).map((p, k) => this.sideRow(p, k, t, f, local)) : rows.map((r, i) => this.diffRow(r, i, t, f, local));
-    const diff = div().id("rv-diff").w_full().h(diffH).flex_none().overflow_y_scrollbar().font_family(mono).text_size(12)
-      .child(v_flex().w_full()
-        .when(Boolean(this.note), (e) => e.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(this.note)))
-        .when(Boolean(shownPath) && Boolean(this.diff) && rows.length === 0, (e) => e.child(div().p(12).text_color(t.dim).child("No text diff (binary, empty or too large)")))
-        .children(body2)
-        .when(this.truncated > 0 && !this.full, (e) => e.child(h_flex().px(10).py(6).gap(8).items_center().text_size(11.5).text_color(t.dim)
-          .child(div().child(`${this.truncated} more lines`))
-          .child(this.btn("rv-show-all", "Show all", (cx) => showAll(cx), t, null)))));
+    // A file just opened goes to its first change, with its hunk bar near the top. The rows are the
+    // scroll area's own children, so the handle can reveal one; revealing scrolls as little as it can,
+    // so first go to the end, then back up to the line above the bar (which then lands at the top).
+    const lead = this.note ? 1 : 0;
+    if (this.toFirst && this.diff) {
+      this.toFirst = false;
+      const first = this.side ? sideBySide(rows).findIndex((p) => p.head) : rows.findIndex((r) => r.kind === "@");
+      if (first >= 0 && body2.length) {
+        this.scroll.scroll_to_item(lead + body2.length - 1);
+        cx.spawn(async (cx) => { await cx.sleep(32); this.scroll.scroll_to_item(lead + Math.max(0, first - 1)); cx.notify(); });
+      }
+    }
+    const diff = v_flex().id("rv-diff").w_full().h(diffH).flex_none().overflow_y_scrollbar().track_scroll(this.scroll).font_family(mono).text_size(12)
+      .when(Boolean(this.note), (e) => e.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(this.note)))
+      .when(Boolean(shownPath) && Boolean(this.diff) && rows.length === 0, (e) => e.child(div().p(12).text_color(t.dim).child("No text diff (binary, empty or too large)")))
+      .children(body2)
+      .when(this.truncated > 0 && !this.full, (e) => e.child(h_flex().px(10).py(6).gap(8).items_center().text_size(11.5).text_color(t.dim)
+        .child(div().child(`${this.truncated} more lines`))
+        .child(this.btn("rv-show-all", "Show all", (cx) => showAll(cx), t, null))));
     const count = this.range ? (this.diff?.rows.slice(this.range.from, this.range.to + 1).filter((r) => r.kind !== "@").length ?? 0) : 0;
     const footer = this.range
       ? h_flex().h(40).flex_none().px(12).gap(8).items_center().border_t(1).border_color(t.border)

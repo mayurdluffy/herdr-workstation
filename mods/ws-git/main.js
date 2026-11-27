@@ -204,9 +204,9 @@ const FLOWS = {
     async run(ui, ctx) {
       const tracked = (await out(ctx, ["diff", "--name-only"])).split("\n").filter(Boolean);
       const fresh = (await out(ctx, ["ls-files", "--others", "--exclude-standard"])).split("\n").filter(Boolean);
-      if (!tracked.length && !fresh.length) throw new Error("There are no unaccepted changes to discard.");
+      if (!tracked.length && !fresh.length) throw new Error("There are no unstaged changes to discard.");
       const parts = [tracked.length && `restores ${tracked.length} changed file${tracked.length === 1 ? "" : "s"}`, fresh.length && `deletes ${fresh.length} new file${fresh.length === 1 ? "" : "s"}`].filter(Boolean);
-      await ui.confirm({ title: "Discard all changes?", detail: `This ${parts.join(" and ")}. Accepted (staged) changes stay. This can't be undone.`, label: "Discard All", danger: true });
+      await ui.confirm({ title: "Discard all changes?", detail: `This ${parts.join(" and ")}. Staged changes stay. This can't be undone.`, label: "Discard All", danger: true });
       return request(ctx, "Discard All Changes", [...(tracked.length ? [["restore", "--worktree", "--", "."]] : []), ...(fresh.length ? [["clean", "-fd", "--", "."]] : [])]);
     },
   },

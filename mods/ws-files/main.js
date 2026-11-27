@@ -4,7 +4,7 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState, TextView } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, agents, openOverlay, notify, run } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, agents, openOverlay, notify, run, shared } from "herdr";
 
 // WS: the agent comments go to, and line numbers of an offset range in a text.
 function tabAgent() {
@@ -341,9 +341,24 @@ export default class Files extends View {
     return out;
   }
 
+  // WS: Changes' Open File asks with "ws.files.open" { path (absolute), at }: open its folders, show it.
+  openAsked(cx) {
+    const ask = /** @type {any} */ (shared("ws.files.open"));
+    if (!ask?.at || ask.at === this.openedAt || Date.now() - ask.at > 10000 || !this.root) return;
+    if (!ask.path.startsWith(`${this.root}/`)) return;
+    this.openedAt = ask.at;
+    const rel = ask.path.slice(this.root.length + 1), parts = rel.split("/");
+    cx.spawn(async (cx) => {
+      for (let k = 1; k < parts.length; k++) { const dir = parts.slice(0, k).join("/"); if (!this.folders.has(dir)) this.toggle(dir, cx); }
+      this.show(rel, cx);
+      cx.notify();
+    });
+  }
+
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     else this.refreshIfDue(cx);
+    this.openAsked(cx); // WS
     const t = theme();
     const font = this.code ? settings() : null;
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)

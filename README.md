@@ -25,7 +25,7 @@ Uninstall: `bash ~/.local/share/herdr-workstation/uninstall.sh` (it also clears 
 ## What you get
 
 The tab bar has four panels: **Files**, **Changes**, **Graph** and **Comments**
-(our Changes, with Accept/Reject, replaces Herdr's own). Each remembers, per space, whether it was open.
+(our Changes, Source Control with Stage/Unstage, replaces Herdr's own). Each remembers, per space, whether it was open.
 
 ### Comment on anything, send it as one message
 
@@ -48,10 +48,10 @@ If an agent's terminal is gone, **Move to…** gives its comments to another age
 
 ### Panels
 
-- **Changes**: Source Control, as VS Code has it. The top has a commit message (`⌘Enter` commits), **Commit** (when there's nothing to commit it becomes **Sync Changes** or **Publish Branch**) with a drop-down (Amend, Commit & Push, Commit & Sync), the branch (click it to check out another) with ↓/↑ Sync, and **⋯**: View & Sort (list or tree; by name, path or status), Pull, Push, Clone, Checkout to, Fetch, and the Commit, Changes, Pull/Push, Branch, Remote, Stash and Tags submenus, plus **Show Git Output** (every command it ran, with its output). The file list shows the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit.
+- **Changes**: Source Control, as VS Code has it. The top has a commit message (`⌘Enter` commits), **Commit** (when there's nothing to commit it becomes **Sync Changes** or **Publish Branch**) with a drop-down (Amend, Commit & Push, Commit & Sync), the branch (click it to check out another) with ↓/↑ Sync, and **⋯**: View & Sort (list or tree; by name, path or status), Pull, Push, Clone, Checkout to, Fetch, and the Commit, Changes, Pull/Push, Branch, Remote, Stash and Tags submenus, plus **Show Git Output** (every command it ran, with its output). Below, **Staged Changes** (what the commit takes) and **Changes** (the rest; a partly staged file is in both, untracked files show `U`). Hover a file for **Open File** (in Files), **Discard Changes** (a new file is deleted after a second click), **Stage** (+) or **Unstage** (−); each list's header does it for all. A staged file's diff is what's staged; in a diff, **Stage hunk**, **Discard hunk** or **Unstage hunk**.
 - Diffs show the **Whole file** with its changes in place, as VS Code does (or only the hunks), wrap
   long lines, mark the changed words in a changed line, show **Inline** or **Side by side**, and
-  **Show all** past 2,000 lines. **Accept hunk** / **Reject hunk** still act on just that hunk.
+  **Show all** past 2,000 lines. The hunk actions still act on just that hunk.
 - **Graph**: every branch's commits with refs; click one for its diff, **Review** it in plannotator.
   **Find** narrows it to commits by message, author, hash or branch. The checked-out branch has a ✓,
   and a branch and its remote twin on the same commit are one badge (`main ☁ origin`). It redraws when
