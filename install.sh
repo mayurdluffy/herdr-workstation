@@ -55,6 +55,9 @@ else
   SRC="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -1)"
 fi
 
+# lib/*.js is copied into the mods that use it (mods can't import from each other).
+[ -x "$SRC/scripts/sync-lib.sh" ] && "$SRC/scripts/sync-lib.sh"
+
 # NAME REPO REF [PATH] from vendor.lock
 lock() { awk -v n="$1" '$1 == n { print $'"$2"' }' "$SRC/vendor.lock"; }
 

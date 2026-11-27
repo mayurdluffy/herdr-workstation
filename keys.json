@@ -2,13 +2,27 @@
   "macos": {
     "global": {
       "cmd-shift-k": "mod.open:ws-menu",
-      "cmd-shift-g": { "command": "pane.split", "args": { "direction": "right", "mod": "ws-git-graph" } }
+      "cmd-shift-g": {
+        "command": "pane.split",
+        "args": {
+          "direction": "right",
+          "mod": "ws-git-graph"
+        }
+      },
+      "cmd-shift-m": "mod.open:ws-comment"
     }
   },
   "linux": {
     "global": {
       "ctrl-alt-k": "mod.open:ws-menu",
-      "ctrl-alt-g": { "command": "pane.split", "args": { "direction": "right", "mod": "ws-git-graph" } }
+      "ctrl-alt-g": {
+        "command": "pane.split",
+        "args": {
+          "direction": "right",
+          "mod": "ws-git-graph"
+        }
+      },
+      "ctrl-alt-m": "mod.open:ws-comment"
     }
   }
 }

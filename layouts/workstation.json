@@ -94,7 +94,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "mod": "ws-tabs"
           }
         },
         {
@@ -159,6 +159,34 @@
                       "type": "block",
                       "content": {
                         "mod": "changes"
+                      }
+                    },
+                    {
+                      "id": "ws-review",
+                      "type": "block",
+                      "content": {
+                        "mod": "ws-review"
+                      }
+                    },
+                    {
+                      "id": "ws-graph",
+                      "type": "block",
+                      "content": {
+                        "mod": "ws-git-graph"
+                      }
+                    },
+                    {
+                      "id": "ws-browser",
+                      "type": "block",
+                      "content": {
+                        "mod": "ws-browser"
+                      }
+                    },
+                    {
+                      "id": "ws-comments",
+                      "type": "block",
+                      "content": {
+                        "mod": "ws-comments"
                       }
                     }
                   ]

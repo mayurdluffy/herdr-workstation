@@ -13,7 +13,8 @@ const ITEMS = [
   { key: "l", label: "Review the agent's last reply", hint: "annotate it and send feedback", act: "last" },
   { key: "d", label: "Annotate docs in this folder", hint: "Markdown tree with comments", act: "docs" },
   { key: "a", label: "Approve a plan…", hint: "pick a Markdown file: Approve or send feedback", act: "gate" },
-  { key: "g", label: "Git graph", hint: "branches and commits beside this pane", act: "graph" },
+  { key: "g", label: "Git graph", hint: "branches and commits, in the side panel", act: "graph" },
+  { key: "c", label: "Comments", hint: "the tray: send your comments to the agent", act: "comments" },
   { key: "m", label: "Preview Markdown…", hint: "live preview beside this pane", act: "preview" },
   { key: "b", label: "Browser", hint: "open the live browser beside this agent", act: "browser" },
   { key: "u", label: "Refresh usage limits", hint: "Claude and Codex", act: "usage" },
@@ -74,7 +75,12 @@ export default class WsMenu extends View {
             break;
           }
           case "graph":
-            run("pane.split", { direction: "right", mod: "ws-git-graph", ...(this.pane ? { pane: this.pane } : {}), props: { folder: this.cwd } });
+            run("layout.select", { stack: "panel-body", child: "ws-graph" });
+            run("layout.show", { id: "panel" });
+            break;
+          case "comments":
+            run("layout.select", { stack: "panel-body", child: "ws-comments" });
+            run("layout.show", { id: "panel" });
             break;
           case "preview": {
             const files = await pickFiles({ prompt: "Preview" });

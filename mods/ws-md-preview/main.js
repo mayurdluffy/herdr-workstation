@@ -1,9 +1,9 @@
 // @ts-check
 // Markdown preview pane: props { file }. Renders the file, reloads when it changes,
-// sends a selection to the tab's agent, and opens the file in plannotator for review.
+// comments on a selection (file and lines go with it), and opens the file in plannotator.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { readTextFile, watchFolder, theme, props, panes, agents, focused, exec, notify } from "herdr";
+import { readTextFile, watchFolder, theme, props, panes, agents, focused, exec, notify, openOverlay } from "herdr";
 
 const dirname = (p) => p.replace(/\/[^/]*$/, "") || "/";
 const basename = (p) => p.split("/").pop() ?? p;
@@ -56,20 +56,20 @@ export default class MdPreview extends View {
     return list.find((a) => a.tab === tab && a.focused) ?? list.find((a) => a.tab === tab) ?? list.find((a) => a.focused) ?? null;
   }
 
-  send(cx) {
-    const agent = this.agent();
-    if (!agent || !this.selection) {
-      notify({ title: "Markdown preview", body: agent ? "Select some text first." : "No agent in this tab.", level: "warning" });
-      return;
-    }
-    const quote = this.selection.split("\n").map((l) => `> ${l}`).join("\n");
-    const message = `About this part of ${this.file}:\n\n${quote}\n`;
-    cx.spawn(async (_cx) => {
-      const r = await exec("hc", ["send", agent.address, message]).catch((e) => ({ code: 1, stderr: String(e) }));
-      notify(r.code === 0
-        ? { title: "Sent to agent", body: `${agent.program?.name ?? "agent"} · ${agent.address}`, level: "success", timeout: 2500 }
-        : { title: "Could not send", body: String(r.stderr).trim().slice(0, 200), level: "error" });
-    });
+  // The selection's lines, from where it sits in the Markdown source.
+  lines() {
+    const r = this.selection?.range;
+    if (!r || this.text === null) return "";
+    const first = this.text.slice(0, r.start).split("\n").length;
+    const last = this.text.slice(0, Math.max(r.start, r.end - 1)).split("\n").length;
+    return first === last ? `:${first}` : `:${first}-${last}`;
+  }
+
+  comment() {
+    if (!this.selection) return;
+    const quote = this.selection.range ? this.text.slice(this.selection.range.start, this.selection.range.end) : this.selection.text;
+    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, height: 420,
+      props: { source: "markdown", where: `${this.file}${this.lines()}`, quote, agent: this.agent()?.address } });
   }
 
   annotate(cx) {
@@ -93,7 +93,7 @@ export default class MdPreview extends View {
     const header = h_flex().h(36).flex_none().px(12).gap(6).items_center().border_b(1).border_color(t.border)
       .child(div().font_semibold().truncate().child(this.file ? basename(this.file) : "Markdown preview"))
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.file ? dirname(this.file) : ""))
-      .when(Boolean(this.selection), (e) => e.child(this.button("md-send", "Send selection to agent", (cx) => this.send(cx), t)))
+      .when(Boolean(this.selection), (e) => e.child(this.button("md-comment", `Comment${this.lines() ? ` on ${this.lines().slice(1)}` : ""}`, () => this.comment(), t)))
       .when(Boolean(this.file), (e) => e
         .child(this.button("md-annotate", "Annotate", (cx) => this.annotate(cx), t))
         .child(this.button("md-reload", "Reload", (cx) => this.load(cx), t)));
@@ -105,7 +105,7 @@ export default class MdPreview extends View {
           ? div().p(16).text_color(t.dim).child("Loading…")
           : div().id("md-scroll").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14)
             .child(TextView.markdown("md-body", this.text).selectable(true)
-              .on_selection_change((s, cx) => { this.selection = s?.text ?? null; cx.notify(); }));
+              .on_selection_change((s, cx) => { this.selection = s ?? null; cx.notify(); }));
     return v_flex().id("ws-md-preview").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13.5)
       .child(header).child(body);
   }
