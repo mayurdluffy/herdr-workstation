@@ -10,6 +10,14 @@
         }
       },
       "cmd-shift-m": "mod.open:ws-comment"
+    },
+    "replace": {
+      "global": {
+        "cmd-p": [
+          "mod.open:picker",
+          "mod.open:ws-picker"
+        ]
+      }
     }
   },
   "linux": {

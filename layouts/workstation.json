@@ -35,7 +35,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "workspace-chrome"
+            "mod": "ws-chrome"
           }
         },
         {
@@ -50,18 +50,7 @@
               },
               "min": 90,
               "content": {
-                "mod": "spaces"
-              }
-            },
-            {
-              "id": "agents",
-              "type": "block",
-              "size": {
-                "weight": 1
-              },
-              "min": 90,
-              "content": {
-                "mod": "agents"
+                "mod": "ws-spaces"
               }
             }
           ]
@@ -70,10 +59,10 @@
           "id": "sidebar-footer",
           "type": "block",
           "size": {
-            "px": 69
+            "px": 41
           },
           "content": {
-            "mod": "workspace-chrome",
+            "mod": "ws-chrome",
             "props": {
               "footer": true
             }

@@ -6,7 +6,9 @@
 
 add: binds each of our keys only when that key is free and our action has no key yet;
 never replaces a key the person already uses (it reports those instead).
-remove: unbinds only keys that still hold exactly our action.
+"replace" ({section: {key: [herdr's action, ours]}}) takes over a key only while it still
+holds Herdr's own action (cmd-p's picker becomes ws-picker); a key the person rebound stays.
+remove: unbinds only keys that still hold exactly our action, and gives replaced keys back.
 """
 import json
 import os
@@ -34,7 +36,17 @@ def main():
     ours = load(ours_path, {}).get(platform, {})
     doc = load(keys_path, {})
     changed = False
+    for section, bindings in ours.get("replace", {}).items():
+        current = doc.setdefault(section, {})
+        for key, (theirs, mine) in bindings.items():
+            want, was = (mine, theirs) if mode == "add" else (theirs, mine)
+            if current.get(key) == was:
+                current[key] = want
+                changed = True
+                print(f"  {'took over' if mode == 'add' else 'gave back'} {key}")
     for section, bindings in ours.items():
+        if section == "replace":
+            continue
         current = doc.setdefault(section, {})
         for key, action in bindings.items():
             if mode == "add":

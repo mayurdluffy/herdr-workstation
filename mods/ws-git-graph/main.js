@@ -222,7 +222,7 @@ export default class GitGraph extends View {
       }
       quote = picked.map((l) => l.text).join("\n");
     }
-    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, height: 420, props: { source: "commit", where, quote, agent: this.agent()?.address } });
+    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, props: { source: "commit", where, quote, agent: this.agent()?.address } });
   }
 
   review(cx) {

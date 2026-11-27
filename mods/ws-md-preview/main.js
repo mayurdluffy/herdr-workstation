@@ -68,7 +68,7 @@ export default class MdPreview extends View {
   comment() {
     if (!this.selection) return;
     const quote = this.selection.range ? this.text.slice(this.selection.range.start, this.selection.range.end) : this.selection.text;
-    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, height: 420,
+    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560,
       props: { source: "markdown", where: `${this.file}${this.lines()}`, quote, agent: this.agent()?.address } });
   }
 

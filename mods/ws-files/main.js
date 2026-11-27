@@ -68,6 +68,27 @@ const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
 
+// WS: a folder takes its most important change below it, as VS Code's explorer shows it:
+// a conflict, then a deletion, then an edit, then a new file.
+const MARK_RANK = { U: 4, D: 3, M: 2, A: 1 };
+function folderMarks(marks) {
+  const out = {};
+  for (const [path, mark] of Object.entries(marks)) {
+    for (let at = path.lastIndexOf("/"); at > 0; at = path.lastIndexOf("/", at - 1)) {
+      const dir = path.slice(0, at);
+      if ((MARK_RANK[out[dir]] ?? 0) >= MARK_RANK[mark]) break; // its parents already have it, or more
+      out[dir] = mark;
+    }
+  }
+  return out;
+}
+// VS Code's git decoration colors (its default dark and light themes).
+const GIT_COLORS = {
+  dark: { A: "#73C991", M: "#E2C08D", D: "#C74E39", U: "#E4676B" },
+  light: { A: "#007100", M: "#895503", D: "#AD0707", U: "#AD0707" },
+};
+const markColor = (_t, mark) => GIT_COLORS[settings().dark === false ? "light" : "dark"][mark] ?? GIT_COLORS.dark.M;
+
 async function directory(path, on) {
   const windowsDirectory = async () => {
     // Windows PowerShell otherwise uses the console code page; exec decodes UTF-8.
@@ -204,14 +225,16 @@ export default class Files extends View {
           if (request.urgent && request.after > started) context.catchUp = true;
           if (status?.code === 0) for (const entry of status.stdout.split("\0").filter(Boolean).slice(0, TOTAL)) {
             const xy = entry.slice(0, 2);
-            marks[`${root}/${entry.slice(3)}`] = xy === "??" || xy.includes("A") ? "A" : xy.includes("U") ? "U" : xy.includes("D") ? "D" : "M";
+            // WS: a conflict (UU, AA, DD, AU, UA, DU, UD) is U before anything else, as in Changes.
+            const conflict = xy.includes("U") || xy === "AA" || xy === "DD";
+            marks[`${root}/${entry.slice(3)}`] = conflict ? "U" : xy === "??" || xy.includes("A") ? "A" : xy.includes("D") ? "D" : "M";
           }
         } else {
           context.watchAt = Date.now();
         }
         if (!this.current(context)) return;
         if (context.dirtyAt <= covered) context.dirtyAt = 0;
-        this.marks = marks; this.error = null;
+        this.marks = marks; this.folderMarks = folderMarks(marks); this.error = null; // WS: folders too
       } catch (e) { if (this.current(context)) this.error = String(e); }
       finally {
         if (this.context === context) this.loading = false;
@@ -281,7 +304,7 @@ export default class Files extends View {
     } else return;
     const first = lineOf(this.text, start), last = lineOf(this.text, Math.max(start, end - 1));
     const where = `${this.file}:${first === last ? first : `${first}-${last}`}`;
-    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, height: 420,
+    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560,
       props: { source: this.preview && isMarkdown(this.file) ? "markdown" : "file", where, quote: this.text.slice(start, end), agent: tabAgent()?.address } });
   }
 
@@ -303,13 +326,16 @@ export default class Files extends View {
     if (out.length >= TOTAL || depth > 40) return out;
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path);
+      const mark = entry.dir ? this.folderMarks?.[`${this.root}/${path}`] : this.marks[`${this.root}/${path}`]; // WS: folders too
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
         .child(entry.dir ? svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(svg(`mods/files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
-        .child(div().flex_1().min_w(0).truncate().child(entry.name))
-        .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
+        // WS: the name in its change's color; a file's letter, or a folder's dot, at the end.
+        .child(div().flex_1().min_w(0).truncate().when(Boolean(mark), el => el.text_color(markColor(t, mark))).child(entry.name))
+        .when(Boolean(mark) && !entry.dir, el => el.child(div().w(12).flex_none().text_center().text_size(11).font_medium().text_color(markColor(t, mark)).child(mark)))
+        .when(Boolean(mark) && entry.dir, el => el.child(div().w(12).flex_none().flex().justify_center().child(div().size(6).rounded(3).bg(markColor(t, mark)).opacity(0.75)))));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);
     }
     return out;

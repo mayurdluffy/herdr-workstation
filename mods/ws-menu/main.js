@@ -97,7 +97,7 @@ export default class WsMenu extends View {
   render(_cx) {
     const th = theme();
     const who = this.agent ? `${this.agent.program?.name ?? this.agent.app ?? "agent"} · ${this.terminal}` : this.terminal ? `terminal ${this.terminal}` : "no terminal focused";
-    return v_flex().id("ws-menu").size_full().bg(th.surface).p(6).gap(1).text_size(13).text_color(th.foreground)
+    return v_flex().id("ws-menu").w_full().bg(th.popover).p(6).gap(1).text_size(13).text_color(th.foreground)
       .track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (e.key === "escape") { this.close(); return; }

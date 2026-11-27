@@ -74,28 +74,31 @@ export default class Comment extends View {
   }
 
   button(id, label, primary, onClick, t) {
-    return div().id(id).h(30).px(12).flex().items_center().rounded(7).text_size(12.5).cursor_pointer()
-      .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground)
-      .hover((s) => s.opacity(0.9)).on_click((_e, cx) => onClick(cx)).child(label);
+    return h_flex().id(id).h(30).px(14).flex_none().items_center().rounded(7).border_1().border_color(primary ? t.solid : t.border)
+      .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
+      .hover((s) => s.opacity(0.88)).on_click((_e, cx) => onClick(cx)).child(label);
   }
 
   render(_cx) {
     const t = theme();
     const mono = settings().font_family ?? "JetBrains Mono";
     const quote = this.quote.length > 1200 ? `${this.quote.slice(0, 1200)}…` : this.quote;
-    return v_flex().id("ws-comment").size_full().p(16).gap(10).bg(t.surface).text_color(t.foreground).text_size(13)
+    // As tall as its content: the header, the quote (if any), the note, the buttons.
+    return v_flex().id("ws-comment").w_full().p(18).gap(12).bg(t.popover).text_color(t.foreground).text_size(13)
       .on_key_down((e, cx) => {
         if (e.key === "escape") this.close();
         if (e.key === "enter" && (e.modifiers?.platform || e.modifiers?.control)) { cx.stop_propagation(); this.save(Boolean(e.modifiers?.shift), cx); }
       })
-      .child(h_flex().gap(8).items_center()
-        .child(div().font_semibold().child("Comment"))
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(this.where)))
-      .when(Boolean(quote), (e) => e.child(div().id("ws-comment-quote").max_h(160).overflow_y_scroll().p(10).rounded(6).bg(t.background)
+      .child(h_flex().gap(12).items_start()
+        .child(v_flex().flex_1().min_w(0).gap(3)
+          .child(div().text_size(14.5).font_semibold().child("Comment"))
+          .when(Boolean(this.where), (e) => e.child(div().truncate().text_size(12).text_color(t.dim).child(this.where))))
+        .child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10.5).text_color(t.dim).child("esc")))
+      .when(Boolean(quote), (e) => e.child(div().id("ws-comment-quote").max_h(160).overflow_y_scroll().px(10).py(8).rounded(6).bg(t.background)
         .border_l(3).border_color(t.accent).font_family(mono).text_size(12).text_color(t.muted).child(quote)))
-      .child(div().id("ws-comment-note").p(8).rounded(7).border_1().border_color(t.input).bg(t.background)
+      .child(div().id("ws-comment-note").px(10).py(8).rounded(8).border_1().border_color(t.accent).bg(t.background)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .child(Textarea.new(this.note).w_full().h(84).text_size(13)))
+        .child(Textarea.new(this.note).w_full().h(72).text_size(13)))
       .when(Boolean(this.error), (e) => e.child(div().text_size(12).text_color(t.ansi1).child(this.error)))
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(this.agent ? `to ${agentLabel(this.agent)}` : "no agent in this tab"))

@@ -14,9 +14,9 @@ function find(node, id) {
   return null;
 }
 
-// WS: our panels, always offered beside Herdr's own; wide ones open at least this wide.
+// WS: our panels, always offered beside Herdr's own. Every panel opens at the width the
+// person last gave the panel: none of them resizes it.
 const WS_PANELS = ["ws-graph", "ws-review", "ws-comments"];
-const WIDE = { "ws-graph": 560, "ws-review": 620 };
 
 // Same as the agents mod: drops a status glyph, keeps a leading bracket or quote.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
@@ -149,7 +149,6 @@ export default class Tabs extends View {
           if (on) run("layout.hide", { id: "panel" });
           else {
             run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" });
-            if (WIDE[id] && (panel?.size?.px ?? 0) < WIDE[id]) run("layout.resize", { id: "panel", px: WIDE[id] });
           }
         }).child(svg(icon).size(14)).child(label)
         .when(badge > 0, el => el.child(div().min_w(16).h(16).px(4).rounded(8).bg(t.accent).text_color(t.accent_foreground).text_size(10).flex().items_center().justify_center().child(String(badge))));

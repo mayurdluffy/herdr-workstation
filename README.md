@@ -42,15 +42,17 @@ comment straight away with **Send now**, or **Copy** them instead.
 
 ### Panels
 
-- **Changes**: the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit. **Full review** opens [plannotator](https://github.com/plannotator/plannotator-tui) (split view, suggestions, Approve).
+- **Changes**: Source Control, as VS Code has it. The top has a commit message (`⌘Enter` commits), **Commit** (when there's nothing to commit it becomes **Sync Changes** or **Publish Branch**) with a drop-down (Amend, Commit & Push, Commit & Sync), the branch (click it to check out another) with ↓/↑ Sync, and **⋯**: View & Sort (list or tree; by name, path or status), Pull, Push, Clone, Checkout to, Fetch, and the Commit, Changes, Pull/Push, Branch, Remote, Stash and Tags submenus, plus **Show Git Output** (every command it ran, with its output). The file list shows the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit.
 - **Graph**: every branch's commits with refs; click one for its diff, **Review** it in plannotator.
 - **Files**: Herdr's Files, plus Comment, Markdown Preview, **Annotate** (plannotator) and **Open beside** (a live preview pane).
+- **Sidebar**: one list. Each space has its own little blob character in its color. Its chevron shows its tabs, each with its agent, how long since it changed, and its state (working, needs you, done, idle); click one to go there. A folded space still shows its most urgent state. There's no separate Agents list. Add machine is the machine icon beside the Spaces +.
 - **Usage**: the status bar's right half is [usage-limits](https://github.com/VladTemp27/herdr-mods): Claude Code and Codex 5-hour and weekly limits, reset times and plan. It asks the `claude` and `codex` CLIs themselves and never reads a token.
 
 ### Keys
 
 | Key (macOS / Linux) | Does |
 |---|---|
+| `cmd-p` | Go to… (the sidebar's search too): spaces with their blobs, tabs by their agent's title and state |
 | `cmd-shift-k` / `ctrl-alt-k` | Workstation menu: review, last reply, docs, approve a plan, graph, Markdown, comments, usage |
 | `cmd-shift-m` / `ctrl-alt-m` | Comment on the terminal selection |
 | `cmd-shift-g` / `ctrl-alt-g` | Git graph as a pane beside the focused one |
@@ -61,9 +63,9 @@ comment straight away with **Send now**, or **Copy** them instead.
 Everything goes into Herdr's home (`~/.config/herdr-app`, or `$HERDR_APP_HOME`):
 
 - `layouts/workstation.json`: Herdr's main layout plus the usage bar and the Markdown link handler.
-- `mods/ws-*`: this repo's mods. `ws-tabs`, `ws-files` and `ws-pane` are copies of Herdr's `tabs`, `files` and `pane` with our additions marked `WS:`; they don't pick up Herdr's later changes to those mods by themselves.
+- `mods/ws-*`: this repo's mods. `ws-tabs`, `ws-files`, `ws-pane`, `ws-spaces`, `ws-picker` and `ws-chrome` are copies of Herdr's `tabs`, `files`, `pane`, `spaces`, `picker` and `workspace-chrome` with our additions marked `WS:`; they don't pick up Herdr's later changes to those mods by themselves.
 - `mods/usage-limits`: third-party, pinned in [`vendor.lock`](vendor.lock).
-- `keys.json`: our keys are added only where the key is free; yours are never replaced.
+- `keys.json`: our keys are added only where the key is free; yours are never replaced. `cmd-p` moves to our Go to… only while it still opens Herdr's own picker, and goes back on uninstall.
 
 A mod folder is only replaced when it carries our `.herdr-workstation` marker, so a mod of yours
 with the same name is left alone. Each mod passes `herdr-app check` before the install reports success.

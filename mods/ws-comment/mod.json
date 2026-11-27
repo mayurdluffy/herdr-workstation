@@ -1,7 +1,7 @@
 {
   "place": "none",
   "title": "Comment",
-  "overlay": { "kind": "dialog", "width": 560, "height": 420 },
+  "overlay": { "kind": "dialog", "width": 560 },
   "palette": [
     { "title": "Comment on terminal selection", "command": "mod.open", "args": { "name": "ws-comment" }, "words": "annotate note review agent quote" }
   ]
