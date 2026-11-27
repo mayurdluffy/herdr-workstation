@@ -25,35 +25,49 @@ Uninstall: `bash ~/.local/share/herdr-workstation/uninstall.sh`.
 
 ## What you get
 
+The tab bar gets four panels beside Files and Changes: **Review**, **Graph**, **Browser** and
+**Comments**. Each remembers, per space, whether it was open.
+
+### Comment on anything, send it as one message
+
+Select something, press **Comment**, write a note. It waits in the **Comments** panel (the tab bar
+shows how many) until you **Send all**: the agent gets one message with each comment's file and lines
+(or commit, page, terminal), the quoted text and your note, like Claude Code desktop or T3. Send one
+comment straight away with **Send now**, or **Copy** them instead.
+
+| Where | How |
+|---|---|
+| **Files** | open a file, select code (or put the cursor on a line), **Comment**. Markdown opens as a rendered **Preview** (switch to **Code**); select in it and Comment |
+| **Review** | click a diff line, shift-click another, **Comment** |
+| **Graph** | click a commit; **Comment** on it, or select diff lines first |
+| **Browser** | **Comment on element** (click it in the page), **Selection**, or **Screenshot** |
+| **Terminals** | select text: the pane header shows **Comment** (or `cmd-shift-m`) |
+| **Markdown preview pane** | select text, **Comment** |
+
+### Panels
+
+- **Review**: the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit. **Full review** opens [plannotator](https://github.com/plannotator/plannotator-tui) (split view, suggestions, Approve).
+- **Graph**: every branch's commits with refs; click one for its diff, **Review** it in plannotator.
+- **Browser**: a real browser ([herdr-web-browser](https://github.com/MattJColes/herdr-web-browser)) for the tab's agent, inside the panel. You and the agent see the same page; the agent clicks, types, reads console and network. **Pop out** opens it as a pane.
+- **Files**: Herdr's Files, plus Comment, Markdown Preview, **Annotate** (plannotator) and **Open beside** (a live preview pane).
+- **Usage**: the status bar's right half is [usage-limits](https://github.com/VladTemp27/herdr-mods): Claude Code and Codex 5-hour and weekly limits, reset times and plan. It asks the `claude` and `codex` CLIs themselves and never reads a token.
+
+### Keys
+
 | Key (macOS / Linux) | Does |
 |---|---|
-| `cmd-shift-k` / `ctrl-alt-k` | **Workstation menu**, acting for the focused agent |
-| `cmd-shift-g` / `ctrl-alt-g` | Git graph beside the focused pane |
+| `cmd-shift-k` / `ctrl-alt-k` | Workstation menu: review, last reply, docs, approve a plan, graph, Markdown, browser, comments, usage |
+| `cmd-shift-m` / `ctrl-alt-m` | Comment on the terminal selection |
+| `cmd-shift-g` / `ctrl-alt-g` | Git graph as a pane beside the focused one |
 | `cmd-shift-b` | Browser menu (herdr-web-browser) |
-| Ctrl/Cmd-click a `.md` path | Markdown preview beside that pane |
-
-The menu (one key each):
-
-- **R** Review changes: the uncommitted diff in [plannotator-tui](https://github.com/plannotator/plannotator-tui); select lines, comment or suggest code, **Send** makes it the agent's next message.
-- **P** Pick what to review: staged, unstaged, branch, a commit or a PR.
-- **L** Review the agent's last reply and send feedback.
-- **D** Annotate the Markdown docs in this folder.
-- **A** Approve a plan: Approve, or send numbered feedback.
-- **G** Git graph: every branch, refs as badges; click a commit for its diff, **Review in plannotator** or **Send to agent**.
-- **M** Preview Markdown: live preview that reloads on save; select text and **Send selection to agent**, or **Annotate**.
-- **B** Browser: [herdr-web-browser](https://github.com/MattJColes/herdr-web-browser) in a pane beside the agent. You and the agent see the same page; send screenshots, page text or a clicked element; the agent reads console and network.
-- **U** Refresh usage limits.
-
-The status bar's right half is [usage-limits](https://github.com/VladTemp27/herdr-mods): Claude Code and
-Codex 5-hour and weekly limits, reset times and plan. Hover for details and the current session's
-context. It asks the `claude` and `codex` CLIs themselves and never reads a token.
+| Ctrl/Cmd-click a `.md` path | Live Markdown preview beside that pane |
 
 ## How it installs
 
 Everything goes into Herdr's home (`~/.config/herdr-app`, or `$HERDR_APP_HOME`):
 
 - `layouts/workstation.json`: Herdr's main layout plus the usage bar and the Markdown link handler.
-- `mods/ws-menu`, `mods/ws-git-graph`, `mods/ws-md-preview`: this repo's mods.
+- `mods/ws-*`: this repo's mods. `ws-tabs`, `ws-files` and `ws-pane` are copies of Herdr's `tabs`, `files` and `pane` with our additions marked `WS:`; they don't pick up Herdr's later changes to those mods by themselves.
 - `mods/usage-limits` and herdr-web-browser's mods: third-party, pinned in [`vendor.lock`](vendor.lock).
 - `keys.json`: our keys are added only where the key is free; yours are never replaced.
 
@@ -64,7 +78,7 @@ from its pinned commit in `~/.local/share/herdr-workstation/`.
 
 ## Develop
 
-Edit a mod in `mods/`, run `./install.sh --no-browser` (it installs from the checkout it's in), and
+Edit a mod in `mods/` (shared code lives in `lib/` and is copied into the mods that use it by `scripts/sync-lib.sh`), run `./install.sh --no-browser` (it installs from the checkout it's in), and
 Herdr reloads it live. `herdr-app check mods/<name>` must pass. To bump a third-party pin, read its
 diff first, then change the ref in `vendor.lock`.
 
