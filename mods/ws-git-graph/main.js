@@ -1,26 +1,35 @@
 // @ts-check
-// Git graph, as a panel (Graph button) or a pane. props { folder?, commit? }; without a
-// folder it follows the focused terminal's repository. Every branch's commits with refs;
-// click one for its diff. Comment on the commit or on diff lines (click, shift-click),
-// review it in plannotator, or send it to the agent.
-import { View, div } from "gpui-kit";
+// Git graph, as a panel (Graph button) or a pane, drawn like VS Code's Git Graph:
+// colored lanes with curved forks and merges, branch and tag badges in their lane's
+// color, then Description · Date · Author · Commit. props { folder?, commit? }; without a
+// folder it follows the focused terminal's repository. Show all branches, the current
+// one, or click a badge to show only that branch. Click a commit for its diff; comment on
+// the commit or on diff lines (click, shift-click), or review it in plannotator.
+import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, theme, props, focused, panes, agents, settings, notify, window, openOverlay } from "herdr";
+import { exec, theme, props, focused, panes, spaces, agents, settings, notify, window, openOverlay, appHome, writeTextFile } from "herdr";
+import { layoutLanes, graphSvg } from "./lanes.js";
 
 const SEP = "\x1f";
-const LIMIT = 300;
+const LIMIT = 400;
 const DETAIL_LIMIT = 1500;
-const ROW = 22;
+const ROW = 24;
+const LANE = 16;
+const PAD = 6;
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "color.ui=never"];
-const LANE_COLORS = ["ansi4", "ansi5", "ansi2", "ansi3", "ansi6", "ansi1", "ansi12", "ansi13", "ansi10", "ansi11"];
+const LANE_COLORS = ["ansi4", "ansi5", "ansi2", "ansi3", "ansi6", "ansi1", "ansi12", "ansi13", "ansi10", "ansi11", "ansi14", "ansi9"];
 
-/** One `git log --graph` line → { graph, sha?, refs[], subject, author, when }. */
-export function parseLine(line) {
-  const i = line.indexOf(SEP);
-  if (i < 0) return { graph: line.replace(/\s+$/, ""), sha: null, refs: [], subject: "", author: "", when: "" };
-  const [sha, refs, subject, author, when] = line.slice(i + 1).split(SEP);
-  const list = (refs ?? "").trim().replace(/^\(|\)$/g, "").split(",").map((r) => r.trim()).filter(Boolean);
-  return { graph: line.slice(0, i).replace(/\s+$/, ""), sha, refs: list, subject: subject ?? "", author: author ?? "", when: when ?? "" };
+/** `%D` decorations → [{ name, kind: "head" | "local" | "remote" | "tag" }]. */
+export function parseRefs(text, remotes) {
+  const out = [];
+  for (const raw of text.split(",").map((s) => s.trim()).filter(Boolean)) {
+    if (raw === "HEAD") continue; // detached HEAD: the ring on the dot shows it
+    if (raw.startsWith("HEAD -> ")) out.push({ name: raw.slice(8), kind: "head" });
+    else if (raw.startsWith("tag: ")) out.push({ name: raw.slice(5), kind: "tag" });
+    else if (remotes.some((r) => raw.startsWith(`${r}/`))) { if (!raw.endsWith("/HEAD")) out.push({ name: raw, kind: "remote" }); }
+    else out.push({ name: raw, kind: "local" });
+  }
+  return out;
 }
 
 /** `git show` lines → each with the file and new-side line number it belongs to. */
@@ -41,29 +50,39 @@ export function locate(lines) {
 
 export default class GitGraph extends View {
   init(_props, cx) {
-    this.rows = [];
+    this.rows = [];          // { hash, short, parents, refs, subject, author, date, col, color }
+    this.graph = null;       // { path, width, height }
     this.root = null;
     this.branch = null;
+    this.head = null;
     this.error = null;
     this.loading = false;
-    this.selected = null;   // sha
-    this.detail = [];       // located lines of `git show`
-    this.range = null;      // { from, to } indexes into detail
-    this.signature = null;  // refs + HEAD, to notice new commits
+    this.selected = null;    // hash
+    this.detail = [];
+    this.range = null;
+    this.signature = null;
     this.folder = null;
-    this.height = 0;        // px, from on_size_change: the lists need definite heights
+    this.height = 0;
     this.width = 0;
+    this.scope = "all";      // "all" | "current" | a ref name
+    this.remotesShown = true;
     this.refresh(cx);
     cx.timer.every(4000, (cx) => this.poll(cx));
+    // A reload or crash skips close(): sweep graph files no copy has drawn for a day.
+    exec("find", [`${appHome()}/data/ws-git-graph`, "-name", "graph-*.svg", "-mmin", "+1440", "-delete"]).catch(() => null);
   }
 
-  // The folder this graph follows: its prop, else the last terminal folder focused.
+  async close(_cx) {
+    if (this.graph) await exec("rm", ["-f", `${appHome()}/${this.graph.path}`]);
+  }
+
   target() {
     const fixed = props()?.folder;
     if (fixed) return fixed;
     const f = focused();
     const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
-    return pane?.terminal ? pane.cwd : f?.terminal ? f.cwd : this.folder;
+    // A mod pane or panel has no folder: keep the last one, else the space's.
+    return (pane?.terminal ? pane.cwd : f?.terminal ? f.cwd : null) ?? this.folder ?? spaces().find((s) => s.active)?.folder ?? null;
   }
 
   git(args) {
@@ -86,31 +105,49 @@ export default class GitGraph extends View {
     return r && r.code === 0 ? `${h?.stdout ?? ""}${r.stdout}` : null;
   }
 
+  scopeArgs() {
+    if (this.scope === "current") return ["HEAD"];
+    if (this.scope !== "all") return [this.scope];
+    return this.remotesShown ? ["--all"] : ["--branches", "--tags", "HEAD"];
+  }
+
+  setScope(scope, cx) { this.scope = scope; this.selected = null; this.detail = []; this.range = null; this.refresh(cx); }
+  toggleRemotes(cx) { this.remotesShown = !this.remotesShown; this.refresh(cx); }
+
   refresh(cx) {
     const folder = this.target();
     if (!folder) { this.error = "Focus a terminal in a git repository"; cx.notify(); return; }
     this.loading = true;
+    cx.notify();
     cx.spawn(async (cx) => {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder });
         this.folder = folder;
         if (top.code !== 0) { this.root = null; this.rows = []; this.error = `Not a git repository: ${folder}`; return; }
         const root = top.stdout.trim();
-        if (root !== this.root) { this.selected = null; this.detail = []; this.range = null; }
+        if (root !== this.root) { this.selected = null; this.detail = []; this.range = null; this.scope = "all"; }
         this.root = root;
-        const fmt = ["%h", "%d", "%s", "%an", "%ar"].join(SEP);
-        const log = await this.git(["log", "--graph", "--all", "--date-order", "--decorate=short", `--format=${SEP}${fmt}`, "-n", String(LIMIT)]);
+        const remotes = (await this.git(["remote"])).stdout.split("\n").filter(Boolean);
+        const fmt = ["%H", "%P", "%h", "%D", "%s", "%an", "%ad"].join(SEP);
+        const log = await this.git(["log", ...this.scopeArgs(), "--date-order", `--format=${fmt}`, "--date=format:%-d %b %Y %H:%M", "-n", String(LIMIT)]);
         if (log.code !== 0) throw new Error(log.stderr.trim() || "git log failed");
-        this.rows = log.stdout.replace(/\n$/, "").split("\n").filter(Boolean).map(parseLine);
+        const commits = log.stdout.split("\n").filter(Boolean).map((line) => {
+          const [hash, parents, short, refs, subject, author, date] = line.split(SEP);
+          return { hash, parents: parents ? parents.split(" ") : [], short, refs: parseRefs(refs ?? "", remotes), subject: subject ?? "", author: author ?? "", date: date ?? "" };
+        });
+        const lanes = layoutLanes(commits);
+        this.rows = commits.map((c, i) => ({ ...c, ...lanes.rows[i] }));
+        this.head = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
         const b = await this.git(["branch", "--show-current"]);
         this.branch = b.stdout.trim() || "detached HEAD";
+        await this.draw(lanes);
         this.signature = await this.signatureNow();
         this.error = this.rows.length ? null : "No commits yet";
         const want = props()?.commit;
         if (want && !this.opened) {
           this.opened = true;
-          const row = this.rows.find((r) => r.sha && want.startsWith(r.sha));
-          if (row) this.pick(row.sha, cx);
+          const row = this.rows.find((r) => r.hash.startsWith(want) || want.startsWith(r.short));
+          if (row) this.pick(row.hash, cx);
         }
       } catch (e) {
         this.error = String(e?.message ?? e);
@@ -121,15 +158,34 @@ export default class GitGraph extends View {
     });
   }
 
-  pick(sha, cx) {
-    if (this.selected === sha) { this.selected = null; this.detail = []; this.range = null; cx.notify(); return; }
-    this.selected = sha;
+  palette() {
+    const t = theme();
+    const p = LANE_COLORS.map((k) => t[k] ?? t.accent);
+    return Object.assign(p, { background: t.background });
+  }
+
+  // The lanes as one SVG file behind the rows; a new file each time, the old one removed.
+  async draw(lanes) {
+    const headIndex = this.rows.findIndex((r) => r.hash === this.head);
+    const { svg, width, height } = graphSvg(lanes, { rowH: ROW, lane: LANE, pad: PAD, palette: this.palette(), head: headIndex });
+    const dir = "data/ws-git-graph";
+    const path = `${dir}/graph-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.svg`;
+    await exec("mkdir", ["-p", `${appHome()}/${dir}`]);
+    await writeTextFile(`${appHome()}/${path}`, svg, null);
+    const old = this.graph;
+    this.graph = { path, width, height };
+    if (old) await exec("rm", ["-f", `${appHome()}/${old.path}`]);
+  }
+
+  pick(hash, cx) {
+    if (this.selected === hash) { this.selected = null; this.detail = []; this.range = null; cx.notify(); return; }
+    this.selected = hash;
     this.detail = [{ text: "Loading…", file: null, line: null }];
     this.range = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await this.git(["show", "--stat", "--patch", "--no-ext-diff", "--format=%H%n%an  ·  %ad%n%n%B", sha]);
-      if (this.selected !== sha) return;
+      const r = await this.git(["show", "--stat", "--patch", "--no-ext-diff", "--format=%H%n%an  ·  %ad%n%n%B", hash]);
+      if (this.selected !== hash) return;
       const lines = (r.code === 0 ? r.stdout : r.stderr).replace(/\n$/, "").split("\n");
       this.detail = locate(lines.slice(0, DETAIL_LIMIT).map((l) => (l.length > 2000 ? l.slice(0, 2000) + "…" : l)));
       if (lines.length > DETAIL_LIMIT) this.detail.push({ text: `… ${lines.length - DETAIL_LIMIT} more lines (Review shows all of it)`, file: null, line: null });
@@ -137,7 +193,6 @@ export default class GitGraph extends View {
     });
   }
 
-  // Click a diff line to select it; shift-click extends the selection.
   selectLine(i, shift, cx) {
     if (shift && this.range) this.range = { from: Math.min(this.range.from, i), to: Math.max(this.range.from, i) };
     else this.range = this.range && this.range.from === i && this.range.to === i ? null : { from: i, to: i };
@@ -152,66 +207,94 @@ export default class GitGraph extends View {
   }
 
   comment() {
-    const row = this.rows.find((r) => r.sha === this.selected);
+    const row = this.rows.find((r) => r.hash === this.selected);
     if (!row) return;
-    let where = `commit ${row.sha} "${row.subject}"`, quote = "";
+    let where = `commit ${row.short} "${row.subject}"`, quote = "";
     if (this.range) {
       const picked = this.detail.slice(this.range.from, this.range.to + 1);
       const located = picked.filter((l) => l.file);
       if (located.length) {
         const file = located[0].file, first = located[0].line, last = located[located.length - 1].line;
-        where = `commit ${row.sha} · ${file}:${first === last ? first : `${first}-${last}`}`;
+        where = `commit ${row.short} · ${file}:${first === last ? first : `${first}-${last}`}`;
       }
       quote = picked.map((l) => l.text).join("\n");
     }
     openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, height: 420, props: { source: "commit", where, quote, agent: this.agent()?.address } });
   }
 
-  review(_cx) {
-    const agent = this.agent(), sha = this.selected;
-    if (!sha) return;
-    _cx.spawn(async (_cx) => {
-      const args = ["hc", "review", "--commit", sha, ...(agent ? ["--terminal", agent.address] : [])];
+  review(cx) {
+    const agent = this.agent(), hash = this.selected;
+    if (!hash) return;
+    cx.spawn(async (_cx) => {
+      const args = ["hc", "review", "--commit", hash, ...(agent ? ["--terminal", agent.address] : [])];
       const r = await exec("plannotator-tui", args, { timeout: 60000, cwd: this.root ?? undefined }).catch((e) => ({ code: 127, stderr: String(e) }));
       if (r.code !== 0) notify({ title: "Review commit", body: String(r.stderr).trim().slice(0, 200) || "plannotator-tui failed", level: "error" });
     });
   }
 
-  graphCells(graph, t) {
-    return [...graph].map((ch, i) => {
-      const color = ch === "*" ? t.foreground : t[LANE_COLORS[Math.floor(i / 2) % LANE_COLORS.length]] ?? t.muted;
-      return div().w(8).flex_none().text_color(color).when(ch === "*", (e) => e.font_semibold()).child(ch === "*" ? "●" : ch === " " ? "" : ch);
-    });
+  // A branch or tag badge in its lane's color; clicking a branch shows only that branch.
+  badge(ref, laneColor, t, key) {
+    const tag = ref.kind === "tag", remote = ref.kind === "remote", head = ref.kind === "head";
+    const color = tag ? t.ansi3 : laneColor;
+    const solid = head || ref.kind === "local";
+    return h_flex().id(key).flex_none().max_w(170).h(18).px(5).gap(3).items_center().rounded(4)
+      .border_1().border_color(color).bg(solid ? color : t.background).text_size(10.5)
+      .text_color(solid ? t.background : color).when(head, (e) => e.font_semibold())
+      .when(!tag, (e) => e.cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.setScope(ref.name, cx); }))
+      .child(div().flex_none().child(tag ? "◆" : remote ? "☁" : "⎇"))
+      .child(div().min_w(0).truncate().child(ref.name));
   }
 
-  refBadge(ref, t) {
-    const head = ref.startsWith("HEAD");
-    const tag = ref.startsWith("tag: ");
-    const remote = !head && !tag && ref.includes("/");
-    const color = head ? t.accent : tag ? t.ansi3 : remote ? t.ansi5 : t.ansi2;
-    return div().flex_none().max_w(160).truncate().px(5).rounded(4).border_1().border_color(color).text_size(10.5).text_color(color)
-      .child(ref.replace(/^HEAD -> /, "⌂ ").replace(/^tag: /, "tag "));
+  header(t) {
+    const chip = (id, label, on, onClick) => div().id(id).h(22).px(8).flex().flex_none().items_center().rounded(6).text_size(11.5).cursor_pointer()
+      .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).border_1().border_color(on ? t.border : t.background)
+      .hover((s) => s.bg(t.hover)).on_click((_e, cx) => onClick(cx)).child(label);
+    const filtered = this.scope !== "all" && this.scope !== "current";
+    const repo = this.root ? this.root.split("/").pop() : "Git graph";
+    return v_flex().flex_none().border_b(1).border_color(t.border)
+      .child(h_flex().h(40).px(14).gap(8).items_center()
+        .child(div().font_semibold().child(repo))
+        .when(Boolean(this.branch), (e) => e.child(div().px(5).rounded(4).bg(t.raised).text_size(11).text_color(t.accent).child(`⎇ ${this.branch}`)))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : `${this.rows.length} commits${this.rows.length >= LIMIT ? " (latest)" : ""}`))
+        .child(chip("gg-refresh", "Refresh", false, (cx) => this.refresh(cx))))
+      .child(h_flex().h(32).px(12).gap(6).items_center()
+        .child(div().text_size(11.5).text_color(t.dim).child("Branches"))
+        .child(chip("gg-all", "All", this.scope === "all", (cx) => this.setScope("all", cx)))
+        .child(chip("gg-current", "Current", this.scope === "current", (cx) => this.setScope("current", cx)))
+        .when(filtered, (e) => e.child(chip("gg-only", `⎇ ${this.scope}  ✕`, true, (cx) => this.setScope("all", cx))))
+        .child(div().flex_1())
+        .when(this.scope === "all", (e) => e.child(chip("gg-remotes", `${this.remotesShown ? "☑" : "☐"} Remote branches`, false, (cx) => this.toggleRemotes(cx)))));
   }
 
-  row(r, i, t, wide) {
-    const on = r.sha && r.sha === this.selected;
-    return h_flex().id(`gg-${i}`).w_full().h(ROW).flex_none().px(10).gap(8).items_center()
-      .when(Boolean(r.sha), (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(r.sha, cx)))
-      .when(Boolean(on), (e) => e.bg(t.selected))
-      .child(h_flex().flex_none().items_center().children(this.graphCells(r.graph, t)))
-      .when(Boolean(r.sha), (e) => e
-        .child(div().flex_none().text_color(t.dim).child(r.sha))
-        .children(r.refs.map((ref) => this.refBadge(ref, t)))
-        .child(div().flex_1().min_w(0).truncate().child(r.subject))
-        .when(wide, (e) => e
-          .child(div().flex_none().max_w(120).truncate().text_color(t.dim).child(r.author))
-          .child(div().flex_none().w(84).text_right().truncate().text_color(t.dim).child(r.when))));
+  columns(t, cols) {
+    const cell = (label, w) => div().flex_none().w(w).truncate().child(label);
+    return h_flex().h(26).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(11).text_color(t.dim).font_semibold()
+      .child(cell("Graph", cols.graph - 10))
+      .child(div().flex_1().min_w(0).child("Description"))
+      .when(cols.date, (e) => e.child(cell("Date", 116)))
+      .when(cols.author, (e) => e.child(cell("Author", 110)))
+      .when(cols.commit, (e) => e.child(cell("Commit", 62)));
+  }
+
+  row(r, i, t, cols, palette) {
+    const on = r.hash === this.selected;
+    const laneColor = palette[r.color % palette.length];
+    return h_flex().id(`gg-${i}`).w_full().h(ROW).flex_none().pr(10).gap(8).items_center().cursor_pointer()
+      .when(on, (e) => e.bg(t.selected)).when(!on, (e) => e.hover((s) => s.bg(t.hover)))
+      .on_click((_e, cx) => this.pick(r.hash, cx))
+      .child(div().flex_none().w(cols.graph))
+      .child(h_flex().flex_1().min_w(0).gap(5).items_center()
+        .children(r.refs.map((ref, k) => this.badge(ref, laneColor, t, `gg-ref-${i}-${k}`)))
+        .child(div().flex_1().min_w(0).truncate().when(r.parents.length > 1, (e) => e.text_color(t.muted)).child(r.subject)))
+      .when(cols.date, (e) => e.child(div().flex_none().w(116).truncate().text_color(t.muted).child(r.date)))
+      .when(cols.author, (e) => e.child(div().flex_none().w(110).truncate().text_color(t.muted).child(r.author)))
+      .when(cols.commit, (e) => e.child(div().flex_none().w(62).truncate().text_color(t.dim).child(r.short)));
   }
 
   detailRow(l, i, t) {
     const kind = l.text.startsWith("+++") || l.text.startsWith("---") ? "file" : l.text[0];
     const picked = this.range && i >= this.range.from && i <= this.range.to;
-    return div().id(`gd-${i}`).w_full().h(ROW - 2).flex_none().px(12).truncate().cursor_pointer()
+    return div().id(`gd-${i}`).w_full().h(ROW - 4).flex_none().px(12).truncate().cursor_pointer()
       .when(kind === "+", (e) => e.bg(t.ansi2 + "18").text_color(t.ansi2))
       .when(kind === "-", (e) => e.bg(t.ansi1 + "18").text_color(t.ansi1))
       .when(kind === "@", (e) => e.bg(t.raised).text_color(t.dim))
@@ -231,27 +314,27 @@ export default class GitGraph extends View {
     const want = this.target();
     if (!this.loading && want && want !== this.folder && !props()?.folder) this.refresh(cx);
     const mono = settings().font_family ?? "JetBrains Mono";
-    const body = Math.max(0, this.height - 43);
-    const detailH = this.selected ? Math.floor(body * 0.55) : 0;
+    const palette = this.palette();
+    const graphW = Math.max(36, this.graph?.width ?? 36);
+    // Columns drop as the panel narrows: Commit, then Author, then Date.
+    const cols = { graph: graphW, date: this.width >= 560, author: this.width >= 700, commit: this.width >= 800 };
+    const top = 40 + 32 + 26 + 3;
+    const body = Math.max(0, this.height - top);
+    const detailH = this.selected ? Math.floor(body * 0.5) : 0;
     const listH = Math.max(ROW, body - detailH);
-    const wide = this.width >= 480;
-    const count = this.rows.filter((r) => r.sha).length;
-    const repo = this.root ? this.root.split("/").pop() : "Git graph";
-    const header = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-      .child(div().font_semibold().child(repo))
-      .when(Boolean(this.branch), (e) => e.child(div().px(5).rounded(4).bg(t.raised).text_size(11).text_color(t.accent).child(this.branch)))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : `${count} commits${count >= LIMIT ? " (latest)" : ""}`))
-      .child(this.button("gg-refresh", "Refresh", (cx) => this.refresh(cx), t));
-    // Plain scroll areas with explicit heights: a virtual list never rendered its rows in a pane.
     const list = this.error && !this.rows.length
       ? div().p(16).text_color(t.dim).child(this.error)
-      : div().id("gg-list").w_full().h(listH).flex_none().overflow_y_scrollbar().font_family(mono).text_size(12)
-        .child(v_flex().w_full().children(this.rows.map((r, i) => this.row(r, i, t, wide))));
+      : div().id("gg-list").w_full().h(listH).flex_none().overflow_y_scrollbar().text_size(12.5)
+        .child(div().relative().w_full().h(this.rows.length * ROW)
+          .child(v_flex().w_full().children(this.rows.map((r, i) => this.row(r, i, t, cols, palette))))
+          // The lanes, drawn once as an SVG over the rows' empty graph column.
+          .when(Boolean(this.graph), (e) => e.child(image(this.graph.path).absolute().left(0).top(0).w(this.graph.width).h(this.graph.height))));
     const lines = this.range ? this.range.to - this.range.from + 1 : 0;
+    const row = this.rows.find((r) => r.hash === this.selected);
     const detail = this.selected
       ? v_flex().w_full().h(detailH).flex_none().border_t(1).border_color(t.border)
         .child(h_flex().h(32).flex_none().px(10).gap(2).items_center().border_b(1).border_color(t.border)
-          .child(div().flex_1().min_w(0).truncate().font_semibold().child(lines ? `${this.selected} · ${lines} line${lines === 1 ? "" : "s"}` : this.selected))
+          .child(div().flex_1().min_w(0).truncate().font_semibold().child(lines ? `${row?.short} · ${lines} line${lines === 1 ? "" : "s"}` : `${row?.short ?? ""}  ${row?.subject ?? ""}`))
           .child(this.button("gg-comment", lines ? "Comment on lines" : "Comment", () => this.comment(), t))
           .child(this.button("gg-review", "Review", (cx) => this.review(cx), t))
           .child(this.button("gg-close", "✕", (cx) => this.pick(this.selected, cx), t)))
@@ -261,6 +344,6 @@ export default class GitGraph extends View {
     return v_flex().id("ws-git-graph").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .on_size_change((size, cx) => { const z = Number(settings().zoom) || 1; this.height = size.height / z; this.width = size.width / z; cx.notify(); })
       .text_color(t.foreground).text_size(12.5)
-      .child(header).child(list).when(detail !== null, (e) => e.child(detail));
+      .child(this.header(t)).child(this.columns(t, cols)).child(list).when(detail !== null, (e) => e.child(detail));
   }
 }
