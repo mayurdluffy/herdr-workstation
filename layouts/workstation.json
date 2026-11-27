@@ -169,13 +169,6 @@
                       }
                     },
                     {
-                      "id": "ws-browser",
-                      "type": "block",
-                      "content": {
-                        "mod": "ws-browser"
-                      }
-                    },
-                    {
                       "id": "ws-comments",
                       "type": "block",
                       "content": {

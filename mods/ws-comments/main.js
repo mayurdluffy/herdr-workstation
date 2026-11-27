@@ -6,7 +6,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme, settings, notify, run, exec } from "herdr";
 import { comments, removeComments, currentAgent, agentLabel, send, format } from "./comments.js";
 
-const SOURCE = { file: "File", markdown: "Markdown", diff: "Change", commit: "Commit", browser: "Browser", terminal: "Terminal" };
+const SOURCE = { file: "File", markdown: "Markdown", diff: "Change", commit: "Commit", terminal: "Terminal" };
 
 export default class Comments extends View {
   init(_props, _cx) {
@@ -89,7 +89,7 @@ export default class Comments extends View {
         .child(v_flex().p(12).gap(18)
           .when(all.length === 0, (e) => e.child(v_flex().gap(6).p(4).text_size(12.5).text_color(t.dim)
             .child(div().text_color(t.muted).child("No comments yet."))
-            .child(div().child("Select text in Files, Review, Git graph, a Markdown preview, the browser or a terminal, then Comment. Comments wait here until you send them to the agent as one message."))))
+            .child(div().child("Select text in Files, Review, Git graph, a Markdown preview or a terminal, then Comment. Comments wait here until you send them to the agent as one message."))))
           .children(order.map((agent) => this.group(agent, byAgent.get(agent), agent === current, t, mono)))));
   }
 }

@@ -1,5 +1,5 @@
-// Workstation tab bar: Herdr's shipped `tabs` mod (Apache-2.0) plus the Graph,
-// Browser and Comments panel buttons; our Changes (ws-review, with Accept/Reject)
+// Workstation tab bar: Herdr's shipped `tabs` mod (Apache-2.0) plus the Graph
+// and Comments panel buttons; our Changes (ws-review, with Accept/Reject)
 // replaces Herdr's own Changes panel. Only the marked parts differ.
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
@@ -15,8 +15,8 @@ function find(node, id) {
 }
 
 // WS: our panels, always offered beside Herdr's own; wide ones open at least this wide.
-const WS_PANELS = ["ws-graph", "ws-review", "ws-browser", "ws-comments"];
-const WIDE = { "ws-graph": 560, "ws-review": 620, "ws-browser": 640 };
+const WS_PANELS = ["ws-graph", "ws-review", "ws-comments"];
+const WIDE = { "ws-graph": 560, "ws-review": 620 };
 
 // Same as the agents mod: drops a status glyph, keeps a leading bracket or quote.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
@@ -164,7 +164,6 @@ export default class Tabs extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .child(panelButton("ws-review", "Changes", "mods/changes/changes.svg"))
       .child(panelButton("ws-graph", "Graph", "mods/ws-tabs/icons/graph.svg"))
-      .child(panelButton("ws-browser", "Browser", "mods/ws-tabs/icons/browser.svg"))
       .child(panelButton("ws-comments", "Comments", "mods/ws-tabs/icons/comments.svg", waiting))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))

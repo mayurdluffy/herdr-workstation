@@ -2,12 +2,11 @@
 # Herdr Workstation installer.
 #
 #   curl -fsSL https://raw.githubusercontent.com/mayurdluffy/herdr-workstation/main/install.sh | bash
-#   ./install.sh [--no-browser] [--no-agent-skills] [--no-switch]
+#   ./install.sh [--no-switch]
 #
 # Installs into Herdr desktop's home (~/.config/herdr-app, or $HERDR_APP_HOME):
-#   layouts/workstation.json, mods ws-menu, ws-git-graph, ws-md-preview, usage-limits,
-#   herdr-web-browser's desktop mods, and our keys (only where free).
-# Tools: plannotator-tui (Homebrew, else cargo), herdr-web-browser (built with cargo).
+#   layouts/workstation.json, the ws-* mods, usage-limits, and our keys (only where free).
+# Tools: plannotator-tui (Homebrew, else cargo).
 # Run it again to update. ./uninstall.sh removes what it added.
 set -euo pipefail
 
@@ -17,13 +16,12 @@ APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/herdr-workstation"
 MARK=".herdr-workstation"   # in every mod folder we own; others are never overwritten
 
-BROWSER=1; AGENT_SKILLS=1; SWITCH=1
+SWITCH=1
 for arg in "$@"; do
   case "$arg" in
-    --no-browser) BROWSER=0 ;;
-    --no-agent-skills) AGENT_SKILLS=0 ;;
+    --no-browser|--no-agent-skills) ;;   # accepted for old command lines; there is no browser now
     --no-switch) SWITCH=0 ;;
-    -h|--help) sed -n 2,12p "$0" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n 2,9p "$0" 2>/dev/null || true; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -120,33 +118,7 @@ UL="$(fetch "$(lock usage-limits 2)" "$(lock usage-limits 3)")"
 cp "$UL/LICENSE" "$UL/NOTICE" "$UL/$(lock usage-limits 4)/" 2>/dev/null || true
 install_mod "$UL/$(lock usage-limits 4)" usage-limits
 
-# ---------- 4. herdr-web-browser (pinned, built) ----------
-if [ "$BROWSER" = 1 ]; then
-  if ! have cargo && [ -x "$HOME/.cargo/bin/cargo" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
-  if ! have cargo; then
-    say "Installing Rust (rustup) to build the browser"
-    curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
-    export PATH="$HOME/.cargo/bin:$PATH"
-  fi
-  HWB_REPO="$(lock herdr-web-browser 2)"; HWB_REF="$(lock herdr-web-browser 3)"
-  HWB="$DATA/herdr-web-browser"
-  if [ ! -d "$HWB/.git" ]; then git clone --quiet "https://github.com/$HWB_REPO" "$HWB"; fi
-  git -C "$HWB" fetch --quiet origin "$HWB_REF" && git -C "$HWB" checkout --quiet --detach "$HWB_REF"
-  say "Building herdr-web-browser $(git -C "$HWB" describe --tags --always) (first build takes a few minutes)"
-  (cd "$HWB" && cargo build --release --locked --quiet)
-  BIN="$HWB/target/release/herdr-web-browser"
-  HERDR_APP_HOME="$APP_HOME" "$BIN" install-cli
-  HERDR_APP_HOME="$APP_HOME" "$BIN" install-desktop
-  HERDR_APP_HOME="$APP_HOME" "$BIN" install-browser || warn "Chrome for Testing download failed; it will use your installed Chrome"
-  if [ "$AGENT_SKILLS" = 1 ]; then
-    HERDR_APP_HOME="$APP_HOME" "$BIN" install-agents || warn "install-agents failed"
-  fi
-  record "browser"
-elif grep -qx browser "$MANIFEST" 2>/dev/null; then
-  record "browser"   # installed earlier: keep it in the manifest so uninstall still removes it
-fi
-
-# ---------- 5. keys ----------
+# ---------- 4. keys ----------
 say "Keys"
 python3 "$SRC/scripts/merge-keys.py" add "$SRC/keys.json" "$PLATFORM" "$APP_HOME/keys.json"
 cp "$SRC/keys.json" "$DATA/keys.json"
@@ -176,7 +148,7 @@ KEY=$([ "$PLATFORM" = macos ] && echo "cmd-shift-k" || echo "ctrl-alt-k")
 cat <<EOF
 
 Herdr Workstation is installed.
-  $KEY            Workstation menu (review, annotate, git graph, Markdown, browser, usage)
+  $KEY            Workstation menu (review, annotate, git graph, Markdown, usage)
   Ctrl/Cmd-click   a .md path in a terminal: preview it beside the pane
   layout.switch    back to your previous layout: cmd-shift-l (Linux: ctrl-shift-l)
   Uninstall:       bash "$DATA/uninstall.sh"

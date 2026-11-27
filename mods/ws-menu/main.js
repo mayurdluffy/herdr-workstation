@@ -1,6 +1,6 @@
 // @ts-check
 // Workstation menu (mod.open:ws-menu): one popup for review, annotate, git graph,
-// Markdown preview, browser and usage. It acts for the terminal that had focus
+// Markdown preview and usage. It acts for the terminal that had focus
 // when it opened, so a review's Send goes to that agent.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -16,7 +16,6 @@ const ITEMS = [
   { key: "g", label: "Git graph", hint: "branches and commits, in the side panel", act: "graph" },
   { key: "c", label: "Comments", hint: "the tray: send your comments to the agent", act: "comments" },
   { key: "m", label: "Preview Markdown…", hint: "live preview beside this pane", act: "preview" },
-  { key: "b", label: "Browser", hint: "open the live browser beside this agent", act: "browser" },
   { key: "u", label: "Refresh usage limits", hint: "Claude and Codex", act: "usage" },
 ];
 
@@ -54,7 +53,7 @@ export default class WsMenu extends View {
     if (this.busy) return;
     const t = this.terminal;
     const target = t ? ["--terminal", t] : [];
-    const needsTerminal = ["review", "pick", "last", "docs", "gate", "browser"];
+    const needsTerminal = ["review", "pick", "last", "docs", "gate"];
     if (needsTerminal.includes(item.act) && !t) {
       notify({ title: item.label, body: "Focus a terminal (an agent's) first.", level: "warning" });
       this.close();
@@ -87,7 +86,6 @@ export default class WsMenu extends View {
             if (files?.[0]) run("pane.split", { direction: "right", mod: "ws-md-preview", ...(this.pane ? { pane: this.pane } : {}), props: { file: files[0] } });
             break;
           }
-          case "browser": await this.call(item.label, "herdr-web-browser", ["--owner", t, "show"]); break;
           case "usage": setShared("usage-limits.refresh", Date.now()); break;
         }
       } finally {

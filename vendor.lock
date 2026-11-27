@@ -5,8 +5,5 @@
 # Claude Code + Codex limits in the status bar (Apache-2.0, VladTemp27).
 usage-limits        VladTemp27/herdr-mods          4f6d54e3737e0ef7629c49c3da1145832e471b34  usage-limits/mods/usage-limits
 
-# Browser in a pane beside the agent (MIT, MattJColes). Built with cargo.
-herdr-web-browser   MattJColes/herdr-web-browser   360daa1269c2af5e9a928cc1bec9b2ad605f3961
-
 # Review, annotate and gate (MIT, plannotator). Installed with Homebrew, else cargo.
 plannotator-tui     plannotator/plannotator-tui    0.12.1

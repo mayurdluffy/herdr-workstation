@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Removes what install.sh added: our layout and mods (only folders it marked), our keys
-# (only where they still hold our action) and, if installed, herdr-web-browser's parts.
-# Tools stay installed: `brew uninstall plannotator-tui`, `rustup self uninstall`.
+# (only where they still hold our action).
+# Tools stay installed: `brew uninstall plannotator-tui`.
 set -euo pipefail
 
 APP_HOME="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
@@ -19,10 +19,6 @@ while read -r entry; do
   case "$entry" in
     mods/*) [ -e "$APP_HOME/$entry/.herdr-workstation" ] && rm -rf "${APP_HOME:?}/$entry" && echo "removed $entry" ;;
     layouts/*) rm -f "$APP_HOME/$entry" && echo "removed $entry" ;;
-    browser)
-      if [ -x "$DATA/herdr-web-browser/target/release/herdr-web-browser" ]; then
-        HERDR_APP_HOME="$APP_HOME" "$DATA/herdr-web-browser/target/release/herdr-web-browser" uninstall || true
-      fi ;;
   esac
 done < "$MANIFEST"
 
