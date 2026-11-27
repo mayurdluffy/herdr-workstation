@@ -1,0 +1,8 @@
+{
+  "place": "none",
+  "title": "Workstation",
+  "overlay": { "kind": "popup", "at": "top", "offset": 40, "width": 420, "height": 500 },
+  "palette": [
+    { "title": "Workstation menu", "command": "mod.open", "args": { "name": "ws-menu" }, "words": "review annotate git graph markdown browser usage plannotator" }
+  ]
+}

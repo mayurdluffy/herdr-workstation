@@ -1,0 +1,14 @@
+{
+  "macos": {
+    "global": {
+      "cmd-shift-k": "mod.open:ws-menu",
+      "cmd-shift-g": { "command": "pane.split", "args": { "direction": "right", "mod": "ws-git-graph" } }
+    }
+  },
+  "linux": {
+    "global": {
+      "ctrl-alt-k": "mod.open:ws-menu",
+      "ctrl-alt-g": { "command": "pane.split", "args": { "direction": "right", "mod": "ws-git-graph" } }
+    }
+  }
+}

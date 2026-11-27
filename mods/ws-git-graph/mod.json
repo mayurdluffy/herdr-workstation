@@ -1,0 +1,7 @@
+{
+  "place": "none",
+  "title": "Git graph",
+  "palette": [
+    { "title": "Git graph", "command": "pane.split", "args": { "direction": "right", "mod": "ws-git-graph" }, "words": "git log branches commits history" }
+  ]
+}
