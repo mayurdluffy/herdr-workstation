@@ -155,13 +155,6 @@
                       }
                     },
                     {
-                      "id": "changes",
-                      "type": "block",
-                      "content": {
-                        "mod": "changes"
-                      }
-                    },
-                    {
                       "id": "ws-review",
                       "type": "block",
                       "content": {

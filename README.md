@@ -25,8 +25,8 @@ Uninstall: `bash ~/.local/share/herdr-workstation/uninstall.sh`.
 
 ## What you get
 
-The tab bar gets four panels beside Files and Changes: **Review**, **Graph**, **Browser** and
-**Comments**. Each remembers, per space, whether it was open.
+The tab bar has five panels: **Files**, **Changes**, **Graph**, **Browser** and **Comments**
+(our Changes, with Accept/Reject, replaces Herdr's own). Each remembers, per space, whether it was open.
 
 ### Comment on anything, send it as one message
 
@@ -38,7 +38,7 @@ comment straight away with **Send now**, or **Copy** them instead.
 | Where | How |
 |---|---|
 | **Files** | open a file, select code (or put the cursor on a line), **Comment**. Markdown opens as a rendered **Preview** (switch to **Code**); select in it and Comment |
-| **Review** | click a diff line, shift-click another, **Comment** |
+| **Changes** | click a diff line, shift-click another, **Comment** |
 | **Graph** | click a commit; **Comment** on it, or select diff lines first |
 | **Browser** | **Comment on element** (click it in the page), **Selection**, or **Screenshot** |
 | **Terminals** | select text: the pane header shows **Comment** (or `cmd-shift-m`) |
@@ -46,7 +46,7 @@ comment straight away with **Send now**, or **Copy** them instead.
 
 ### Panels
 
-- **Review**: the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit. **Full review** opens [plannotator](https://github.com/plannotator/plannotator-tui) (split view, suggestions, Approve).
+- **Changes**: the agent's uncommitted changes. **Accept** stages a file or a hunk, **Reject** restores it (a new file is deleted after a second click). Accepted files wait under Accepted until you commit. **Full review** opens [plannotator](https://github.com/plannotator/plannotator-tui) (split view, suggestions, Approve).
 - **Graph**: every branch's commits with refs; click one for its diff, **Review** it in plannotator.
 - **Browser**: a real browser ([herdr-web-browser](https://github.com/MattJColes/herdr-web-browser)) for the tab's agent, inside the panel. You and the agent see the same page; the agent clicks, types, reads console and network. **Pop out** opens it as a pane.
 - **Files**: Herdr's Files, plus Comment, Markdown Preview, **Annotate** (plannotator) and **Open beside** (a live preview pane).

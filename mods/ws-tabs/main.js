@@ -1,5 +1,6 @@
 // Workstation tab bar: Herdr's shipped `tabs` mod (Apache-2.0) plus the Graph,
-// Review, Browser and Comments panel buttons. Only the marked parts differ.
+// Browser and Comments panel buttons; our Changes (ws-review, with Accept/Reject)
+// replaces Herdr's own Changes panel. Only the marked parts differ.
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
@@ -135,7 +136,8 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), ...WS_PANELS];
+    // WS: Herdr's Changes is replaced by ours, so it is never restored or offered.
+    const enabled = [...(shared("workspace.panels") ?? ["files"]).filter((p) => p !== "changes"), ...WS_PANELS];
     const waiting = (() => { const c = shared("ws.comments"); return Array.isArray(c) ? c.length : 0; })();
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon, badge = 0) => {
@@ -160,8 +162,7 @@ export default class Tabs extends View {
         .children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
-      .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
-      .child(panelButton("ws-review", "Review", "mods/ws-tabs/icons/review.svg"))
+      .child(panelButton("ws-review", "Changes", "mods/changes/changes.svg"))
       .child(panelButton("ws-graph", "Graph", "mods/ws-tabs/icons/graph.svg"))
       .child(panelButton("ws-browser", "Browser", "mods/ws-tabs/icons/browser.svg"))
       .child(panelButton("ws-comments", "Comments", "mods/ws-tabs/icons/comments.svg", waiting))

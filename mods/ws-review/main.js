@@ -1,5 +1,5 @@
 // @ts-check
-// Review panel: the agent's uncommitted changes, file by file. Accept stages a file or
+// Changes panel (id ws-review): the agent's uncommitted changes, file by file. Accept stages a file or
 // hunk, Reject restores it (a new file is deleted, after a second click). Accepted files
 // wait under Accepted until you commit. Click a line, shift-click another, Comment: the
 // comment goes to the tray with its file and lines. Full review opens plannotator.
@@ -75,7 +75,7 @@ export default class Review extends View {
     cx.timer.every(3000, (cx) => { if (this.visible()) this.refresh(cx); });
   }
 
-  // Only poll git while the panel shows Review and the window is up.
+  // Only poll git while the panel shows Changes and the window is up.
   visible() {
     if (window()?.visible === false || window()?.active === false) return false;
     const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
@@ -288,7 +288,7 @@ export default class Review extends View {
     const f = this.open ? this.file(this.open) : null;
     const local = !this.on;
     const header = h_flex().h(42).flex_none().px(14).gap(6).items_center().border_b(1).border_color(t.border)
-      .child(div().font_semibold().child("Review"))
+      .child(div().font_semibold().child("Changes"))
       .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${pending.length} to review`))
       .when(accepted.length > 0, (e) => e.child(div().text_size(10.5).text_color(t.ansi2).child(`${accepted.length} accepted`)))
       .child(div().flex_1())
