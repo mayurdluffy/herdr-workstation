@@ -7,15 +7,19 @@
 // click); accepted files wait under Accepted until you commit. Click a line, shift-click
 // another, Comment: the comment goes to the tray with its file and lines. Every git request (from here, the menus or their dialogs) runs here, one at a
 // time, and is logged for Show Git Output.
+// A file's diff shows the whole file with its changes in place (or only the hunks), marks the
+// changed words, wraps long lines, and can be shown side by side.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { exec, theme, settings, focused, panes, spaces, agents, layout, window, notify, openOverlay, appHome, writeTextFile, readTextFile, shared, setShared } from "herdr";
 import { REQUEST, CLAIM, LOG, MENU, post, view, openDialog, moreMenu, commitMenu, menuSize, commitOptions, planCommit, pushSteps } from "./git-actions.js";
+import { markWords, sideBySide } from "./diff-words.js";
 
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "color.ui=never"];
 const ROW = 20;
 const FILE_H = 26;
-const MAX_LINES = 2000;
+const MAX_LINES = 2000;       // shown at first; "Show all" lifts it to ALL_LINES
+const ALL_LINES = 20000;
 const STATUS_ORDER = { U: 0, A: 1, M: 2, D: 3 };
 const ICON = (name) => `mods/ws-review/icons/${name}.svg`;
 
@@ -89,6 +93,32 @@ export function parseDiff(text) {
     else rows.push({ kind: "\\", text: line, hunk: hunk.index });
   }
   return { header, hunks, rows };
+}
+
+/** Context for a whole-file diff: more lines than any file shown here has. */
+export const WHOLE = 1000000;
+
+/**
+ * The whole file with its changes in place: the rows of a diff made with WHOLE context
+ * (`full`), with a header row put back where each of the -U3 diff's hunks (`hunks`,
+ * the ones Accept/Reject hunk apply) begins.
+ */
+export function fullView(full, hunks) {
+  const starts = hunks.map((hk) => {
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hk.header);
+    return { old: m ? +m[1] : 0, neu: m ? +m[2] : 0, hk };
+  });
+  const out = [];
+  let h = 0;
+  const header = (st) => ({ kind: "@", text: st.hk.header, hunk: st.hk.index });
+  for (const r of full.rows) {
+    if (r.kind === "@") continue;
+    // A hunk starts at its first line: old line `old` and new line `neu` (an added line has no old number).
+    while (h < starts.length && r.newN === starts[h].neu && (r.kind === "+" || r.oldN === starts[h].old)) out.push(header(starts[h++]));
+    out.push(r);
+  }
+  while (h < starts.length) out.push(header(starts[h++]));
+  return out;
 }
 
 const mark = (f) => (f.conflict ? "U" : f.fresh ? "A" : f.deleted ? "D" : "M");
@@ -175,6 +205,10 @@ export default class Review extends View {
     this.collapsed = new Set();
     this.anchor = null;     // where the last menu button was pressed
     this.sentAt = 0;
+    this.side = localStorage.getItem("ws-review.side") === "1"; // side by side
+    this.whole = localStorage.getItem("ws-review.whole") !== "0"; // the whole file, not only the hunks
+    this.full = false;      // past MAX_LINES: show all
+    this.truncated = 0;     // rows hidden by MAX_LINES
     this.message = TextareaState.new({ placeholder: "Message (⌘Enter to commit)", rows: 1 });
     this.message.set_auto_grow(1, 6);
     this.message.on("change", () => { if (this.root) localStorage.setItem(`msg:${this.root}`, this.message.value()); });
@@ -254,18 +288,44 @@ export default class Review extends View {
       }
     } else {
       // Pending files show what isn't accepted yet; accepted-only files show what was staged.
-      const args = f.pending ? ["diff", "--no-ext-diff", "--no-textconv", "-U3", "--", path] : ["diff", "--cached", "--no-ext-diff", "--no-textconv", "-U3", "--", path];
-      const r = await this.git(args);
+      const args = (u) => (f.pending ? ["diff", "--no-ext-diff", "--no-textconv", `-U${u}`, "--", path] : ["diff", "--cached", "--no-ext-diff", "--no-textconv", `-U${u}`, "--", path]);
+      const r = await this.git(args(3));
       text = r.code === 0 ? r.stdout : "";
+      // The whole file around the changes; the -U3 hunks stay what Accept/Reject hunk apply.
+      if (this.whole && text) {
+        const all = await this.git(args(WHOLE));
+        if (this.open !== path) return;
+        if (all.code === 0 && all.stdout) {
+          const d = parseDiff(text);
+          this.diff = this.shape({ ...d, rows: fullView(parseDiff(all.stdout), d.hunks) });
+          return;
+        }
+      }
     }
     if (this.open !== path) return;
-    const d = parseDiff(text);
-    this.note = d.rows.length > MAX_LINES ? `Showing the first ${MAX_LINES} lines.` : null;
-    if (d.rows.length > MAX_LINES) d.rows = d.rows.slice(0, MAX_LINES);
-    this.diff = d;
+    this.diff = this.shape(parseDiff(text));
+  }
+
+  /** Whole file, or only the changed hunks: reloads what's shown. */
+  setWhole(on, cx) {
+    this.whole = on; this.range = null;
+    localStorage.setItem("ws-review.whole", on ? "1" : "0");
+    if (this.open) { const p = this.open; cx.spawn(async (cx) => { await this.load(p); cx.notify(); }); }
+    cx.notify();
+  }
+
+  /** Marks changed words and cuts a long diff to MAX_LINES (unless Show all). */
+  shape(d) {
+    const cap = this.full ? ALL_LINES : MAX_LINES;
+    this.truncated = Math.max(0, d.rows.length - cap);
+    this.note = this.truncated && this.full ? `Showing the first ${ALL_LINES} lines.` : null;
+    if (this.truncated) d.rows = d.rows.slice(0, cap);
+    markWords(d.rows);
+    return d;
   }
 
   pick(path, cx) {
+    this.full = false;
     this.open = path; this.diff = null; this.range = null; this.confirm = null;
     cx.spawn(async (cx) => { await this.load(path); cx.notify(); });
     cx.notify();
@@ -454,14 +514,15 @@ export default class Review extends View {
   }
 
   comment() {
-    if (!this.range || !this.diff || !this.open) return;
+    const path = this.open;
+    if (!this.range || !this.diff || !path) return;
     const rows = this.diff.rows.slice(this.range.from, this.range.to + 1).filter((r) => r.kind !== "@");
     const nums = rows.map((r) => r.newN).filter((n) => n !== undefined);
     const lo = Math.min(...nums), hi = Math.max(...nums);
     const lines = nums.length ? (lo === hi ? `${lo}` : `${lo}-${hi}`) : "";
     const quoted = rows.map((r) => `${r.kind === "\\" || r.kind === " " ? " " : r.kind}${r.text}`).join("\n");
     openOverlay({ mod: "ws-comment", kind: "dialog", width: 560,
-      props: { source: "diff", where: `${this.open}${lines ? `:${lines}` : ""} (uncommitted change)`, quote: quoted, agent: this.agent()?.address } });
+      props: { source: "diff", where: `${path}${lines ? `:${lines}` : ""} (uncommitted change)`, quote: quoted, agent: this.agent()?.address } });
   }
 
 
@@ -533,13 +594,45 @@ export default class Review extends View {
           .child(this.btn(`rh-acc-${i}`, "Accept hunk", (cx) => this.act("Accept hunk", [this.hunkStep(r.hunk, false)], cx), t, "ok"))
           .child(this.btn(`rh-rej-${i}`, "Reject hunk", (cx) => this.act("Reject hunk", [this.hunkStep(r.hunk, true)], cx), t, "bad")));
     }
-    return h_flex().id(`rd-${i}`).w_full().h(ROW).flex_none().gap(8).cursor_pointer()
+    return h_flex().id(`rd-${i}`).w_full().min_h(ROW).flex_none().gap(8).items_start().cursor_pointer()
       .when(r.kind === "+", (e) => e.bg(t.ansi2 + "18")).when(r.kind === "-", (e) => e.bg(t.ansi1 + "18"))
       .when(Boolean(picked), (e) => e.bg(t.selection ?? t.selected))
       .on_click((ev, cx) => this.selectRow(i, Boolean(ev.modifiers?.shift), cx))
       .child(div().w(38).flex_none().text_right().text_color(t.dim).child(r.kind === "-" || r.newN === undefined ? "" : String(r.newN)))
       .child(div().w(10).flex_none().text_color(r.kind === "+" ? t.ansi2 : r.kind === "-" ? t.ansi1 : t.dim).child(r.kind === " " ? "" : r.kind))
-      .child(div().flex_1().min_w(0).truncate().child(r.text.replace(/\t/g, "    ") || " "));
+      .child(this.lineText(r, t, `rd-${i}`));
+  }
+
+  /** A line's text, wrapped to the width; changed words get a stronger background. */
+  lineText(r, t, key) {
+    const tabs = (s) => s.replace(/\t/g, "    ");
+    if (!r.words) return div().flex_1().min_w(0).whitespace_normal().child(tabs(r.text) || " ");
+    const mark = r.kind === "+" ? t.ansi2 + "44" : t.ansi1 + "44";
+    // One piece per word or space, so a long line wraps between words like plain text.
+    const pieces = r.words.flatMap((w) => (w.text.match(/\s+|\S+/g) ?? []).map((text) => ({ text, changed: w.changed })));
+    return h_flex().flex_1().min_w(0).flex_wrap()
+      .children(pieces.map((w, k) => div().id(`${key}-w${k}`).flex_none().when(w.changed, (e) => e.bg(mark)).child(tabs(w.text))));
+  }
+
+  /** One side-by-side row: removed (or context) on the left, added on the right. */
+  sideRow(p, k, t, f, local) {
+    if (p.head) return this.diffRow(p.head, p.i, t, f, local);
+    const range = this.range;
+    const half = (r, i, side) => {
+      const picked = range && i >= 0 && i >= range.from && i <= range.to;
+      const n = r ? (side === "l" ? r.oldN : r.newN) : undefined;
+      return h_flex().id(`rs-${k}-${side}`).w_1_2().min_w(0).gap(6).items_start().overflow_hidden()
+        .when(r?.kind === "-", (e) => e.bg(t.ansi1 + "18")).when(r?.kind === "+", (e) => e.bg(t.ansi2 + "18"))
+        .when(!r, (e) => e.bg(t.raised))
+        .when(Boolean(picked), (e) => e.bg(t.selection ?? t.selected))
+        .when(i >= 0, (e) => e.cursor_pointer().on_click((ev, cx) => this.selectRow(i, Boolean(ev.modifiers?.shift), cx)))
+        .child(div().w(30).flex_none().text_right().text_color(t.dim).child(n === undefined ? "" : String(n)))
+        .when(Boolean(r), (e) => e.child(this.lineText(r, t, `rs-${k}-${side}`)));
+    };
+    return h_flex().id(`rs-${k}`).w_full().min_h(ROW).flex_none().items_stretch()
+      .child(half(p.left, p.li, "l"))
+      .child(div().w(1).flex_none().bg(t.border))
+      .child(half(p.right, p.ri, "r"));
   }
 
   sourceControl(t, pending, accepted) {
@@ -597,7 +690,8 @@ export default class Review extends View {
     const pending = this.files.filter((f) => f.pending), accepted = this.files.filter((f) => !f.pending);
     const pendingRows = this.rows(pending, "p", t), acceptedRows = this.rows(accepted, "a", t);
     const listRows = pendingRows.length + acceptedRows.length + (accepted.length ? 1 : 0) + (pending.length ? 1 : 0);
-    const body = Math.max(0, this.height - this.topH - (this.range ? 40 : 0));
+    const TOOL = 28;
+    const body = Math.max(0, this.height - this.topH - TOOL - (this.range ? 40 : 0));
     const listH = Math.min(Math.max(60, listRows * FILE_H + 24), Math.floor(body * 0.45));
     const diffH = Math.max(0, body - listH - 1);
     const f = this.open ? this.file(this.open) : null;
@@ -619,11 +713,28 @@ export default class Review extends View {
         ])).children(pendingRows))
         .when(this.files.length === 0, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading && !this.root ? "Loading…" : "No uncommitted changes")))));
     const rows = this.diff?.rows ?? [];
+    const shownPath = this.open;
+    const toolBtn = (id, label, on, onClick) => div().id(id).h(20).px(6).flex().flex_none().items_center().rounded(5).text_size(11).cursor_pointer()
+      .text_color(on ? t.foreground : t.muted).when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => onClick(cx)).child(label);
+    const tool = h_flex().h(TOOL).flex_none().px(10).gap(4).items_center().border_b(1).border_color(t.border).text_size(11.5)
+      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(shownPath ?? ""))
+      .child(toolBtn("rv-whole", "Whole file", this.whole, (cx) => this.setWhole(!this.whole, cx)))
+      .child(div().w(1).h(14).mx(2).flex_none().bg(t.border))
+      .child(toolBtn("rv-inline", "Inline", !this.side, (cx) => { this.side = false; localStorage.setItem("ws-review.side", "0"); cx.notify(); }))
+      .child(toolBtn("rv-side", "Side by side", this.side, (cx) => { this.side = true; localStorage.setItem("ws-review.side", "1"); cx.notify(); }));
+    const showAll = (cx) => {
+      this.full = true; this.range = null;
+      if (this.open) { const p = this.open; cx.spawn(async (cx) => { await this.load(p); cx.notify(); }); }
+    };
+    const body2 = this.side ? sideBySide(rows).map((p, k) => this.sideRow(p, k, t, f, local)) : rows.map((r, i) => this.diffRow(r, i, t, f, local));
     const diff = div().id("rv-diff").w_full().h(diffH).flex_none().overflow_y_scrollbar().font_family(mono).text_size(12)
       .child(v_flex().w_full()
         .when(Boolean(this.note), (e) => e.child(div().px(10).py(4).text_size(11).text_color(t.dim).child(this.note)))
-        .when(Boolean(f) && Boolean(this.diff) && rows.length === 0, (e) => e.child(div().p(12).text_color(t.dim).child("No text diff (binary, empty or too large)")))
-        .children(rows.map((r, i) => this.diffRow(r, i, t, f, local))));
+        .when(Boolean(shownPath) && Boolean(this.diff) && rows.length === 0, (e) => e.child(div().p(12).text_color(t.dim).child("No text diff (binary, empty or too large)")))
+        .children(body2)
+        .when(this.truncated > 0 && !this.full, (e) => e.child(h_flex().px(10).py(6).gap(8).items_center().text_size(11.5).text_color(t.dim)
+          .child(div().child(`${this.truncated} more lines`))
+          .child(this.btn("rv-show-all", "Show all", (cx) => showAll(cx), t, null)))));
     const count = this.range ? (this.diff?.rows.slice(this.range.from, this.range.to + 1).filter((r) => r.kind !== "@").length ?? 0) : 0;
     const footer = this.range
       ? h_flex().h(40).flex_none().px(12).gap(8).items_center().border_t(1).border_color(t.border)
@@ -633,6 +744,6 @@ export default class Review extends View {
       : null;
     return v_flex().id("ws-review").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(12.5)
       .on_size_change((size, cx) => { this.height = size.height / (Number(settings().zoom) || 1); cx.notify(); })
-      .child(this.sourceControl(t, pending, accepted)).child(list).child(diff).when(footer !== null, (e) => e.child(footer));
+      .child(this.sourceControl(t, pending, accepted)).child(list).child(tool).child(diff).when(footer !== null, (e) => e.child(footer));
   }
 }

@@ -1,0 +1,9 @@
+# Our mods that are copies of Herdr's shipped mods: OURS UPSTREAM.
+# upstream/<UPSTREAM>/main.js is Herdr's file as it was when ours was last merged with it
+# (the base for scripts/forks.sh merge); upstream/VERSION is that Herdr's version.
+ws-tabs tabs
+ws-files files
+ws-pane pane
+ws-spaces spaces
+ws-picker picker
+ws-chrome workspace-chrome

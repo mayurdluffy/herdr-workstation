@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Removes what install.sh added: our layout and mods (only folders it marked), our keys
-# (only where they still hold our action).
+# (only where they still hold our action), and our shared state (ws.* in shared.json).
 # Tools stay installed: `brew uninstall plannotator-tui`.
 set -euo pipefail
 
@@ -23,5 +23,18 @@ while read -r entry; do
 done < "$MANIFEST"
 
 [ -f "$DATA/keys.json" ] && python3 "$DATA/merge-keys.py" remove "$DATA/keys.json" "$PLATFORM" "$APP_HOME/keys.json"
+
+# Our shared state (comments, git log, ...): the ws.* keys in shared.json.
+if [ -f "$APP_HOME/shared.json" ]; then
+  python3 - "$APP_HOME/shared.json" <<'PY' || true
+import json, sys
+p = sys.argv[1]
+with open(p) as f: d = json.load(f)
+gone = [k for k in d if k.startswith("ws.")]
+for k in gone: del d[k]
+with open(p, "w") as f: json.dump(d, f)
+print(f"removed {len(gone)} ws.* keys from shared.json")
+PY
+fi
 rm -rf "$DATA"
 echo "Herdr Workstation removed."

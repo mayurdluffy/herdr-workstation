@@ -189,6 +189,16 @@
               }
             },
             {
+              "id": "activity",
+              "type": "block",
+              "size": {
+                "px": 210
+              },
+              "content": {
+                "mod": "ws-activity"
+              }
+            },
+            {
               "id": "usage",
               "type": "block",
               "size": {

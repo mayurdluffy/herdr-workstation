@@ -1,11 +1,12 @@
 // @ts-check
 // Add one comment: a dialog with the quoted text and a note box.
 // props { source, where, quote, agent? } from another mod; with no props it
-// comments on the focused terminal's selected text (cmd-shift-m).
+// comments on the focused terminal's selected text (cmd-shift-m); { edit: id } edits a
+// comment in the tray. Send now to a busy agent queues it (it goes when the agent stops).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState } from "gpui-base";
 import { props, closeOverlay, theme, focused, panes, run, exec, notify, window, settings } from "herdr";
-import { addComment, currentAgent, agentLabel, send } from "./comments.js";
+import { addComment, updateComments, comments, currentAgent, agentLabel, send } from "./comments.js";
 
 // The selection Herdr just copied. Terminals copy on select, so this is the selection.
 async function clipboard() {
@@ -22,17 +23,19 @@ async function clipboard() {
 export default class Comment extends View {
   init(_props, cx) {
     const p = props() ?? {};
-    const agent = p.agent ? { address: p.agent } : currentAgent();
+    this.editing = p.edit ? comments().find((c) => c.id === p.edit) ?? null : null;
+    const agent = this.editing ? { address: this.editing.agent } : p.agent ? { address: p.agent } : currentAgent();
     this.agent = agent?.address ?? null;
-    this.source = p.source ?? "terminal";
-    this.where = p.where ?? "";
-    this.quote = p.quote ?? "";
+    this.source = this.editing?.source ?? p.source ?? "terminal";
+    this.where = this.editing?.where ?? p.where ?? "";
+    this.quote = this.editing?.quote ?? p.quote ?? "";
     this.error = null;
     this.busy = false;
     this.note = TextareaState.new({ placeholder: "Your comment for the agent…", rows: 4 });
+    if (this.editing) this.note.set_value(this.editing.note);
     this.note.on("submit", (_e, cx) => this.save(false, cx));
     this.note.focus();
-    if (!p.source) this.fromTerminal(cx);
+    if (!p.source && !this.editing) this.fromTerminal(cx);
   }
 
   fromTerminal(cx) {
@@ -60,13 +63,22 @@ export default class Comment extends View {
     if (!this.agent) { this.error = "No agent in this tab to send comments to."; cx.notify(); return; }
     const note = this.note.value();
     if (!note.trim() && !this.quote.trim()) { this.error = "Write a comment first."; cx.notify(); return; }
-    const item = addComment({ agent: this.agent, source: this.source, where: this.where, quote: this.quote, note });
+    let item;
+    if (this.editing) {
+      updateComments([this.editing.id], { note });
+      item = { ...this.editing, note };
+    } else item = addComment({ agent: this.agent, source: this.source, where: this.where, quote: this.quote, note });
     if (!now) { this.close(); return; }
     this.busy = true;
     cx.notify();
     cx.spawn(async (cx) => {
       const err = await send(this.agent, [item]);
       this.busy = false;
+      if (err === "queued") {
+        notify({ title: "Queued", body: `${agentLabel(this.agent)} is busy: the comment goes when it stops.`, level: "info", timeout: 3000 });
+        this.close();
+        return;
+      }
       if (err) { this.error = `Kept in the tray: ${err}`; cx.notify(); return; }
       notify({ title: "Sent to agent", body: agentLabel(this.agent), level: "success", timeout: 2500 });
       this.close();
@@ -91,7 +103,7 @@ export default class Comment extends View {
       })
       .child(h_flex().gap(12).items_start()
         .child(v_flex().flex_1().min_w(0).gap(3)
-          .child(div().text_size(14.5).font_semibold().child("Comment"))
+          .child(div().text_size(14.5).font_semibold().child(this.editing ? "Edit comment" : "Comment"))
           .when(Boolean(this.where), (e) => e.child(div().truncate().text_size(12).text_color(t.dim).child(this.where))))
         .child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10.5).text_color(t.dim).child("esc")))
       .when(Boolean(quote), (e) => e.child(div().id("ws-comment-quote").max_h(160).overflow_y_scroll().px(10).py(8).rounded(6).bg(t.background)
@@ -104,6 +116,6 @@ export default class Comment extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(this.agent ? `to ${agentLabel(this.agent)}` : "no agent in this tab"))
         .child(this.button("ws-comment-cancel", "Cancel", false, () => this.close(), t))
         .child(this.button("ws-comment-send", this.busy ? "Sending…" : "Send now", false, (cx) => this.save(true, cx), t))
-        .child(this.button("ws-comment-add", "Add to tray", true, (cx) => this.save(false, cx), t)));
+        .child(this.button("ws-comment-add", this.editing ? "Save" : "Add to tray", true, (cx) => this.save(false, cx), t)));
   }
 }

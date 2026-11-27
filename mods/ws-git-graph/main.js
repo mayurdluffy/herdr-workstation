@@ -5,10 +5,14 @@
 // folder it follows the focused terminal's repository. Show all branches, the current
 // one, or click a badge to show only that branch. Click a commit for its diff; comment on
 // the commit or on diff lines (click, shift-click), or review it in plannotator.
+// Find narrows the list to commits whose message, author, hash or branch match.
+// It redraws when the repository's refs change (a watch on its git folder; remote
+// spaces and Linux poll instead).
 import { View, div, image } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
-import { exec, theme, props, focused, panes, spaces, agents, settings, notify, window, openOverlay, appHome, writeTextFile } from "herdr";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { exec, theme, props, focused, panes, spaces, agents, settings, notify, window, openOverlay, appHome, writeTextFile, watchFolder, layout } from "herdr";
 import { layoutLanes, graphSvg } from "./lanes.js";
+import { markWords } from "./diff-words.js";
 
 const SEP = "\x1f";
 const LIMIT = 400;
@@ -31,6 +35,39 @@ export function parseRefs(text, remotes) {
   }
   return out;
 }
+
+/**
+ * A commit's refs as badges: a local branch and its remote twin on the same commit are one
+ * badge ("main" with remotes ["origin"]), as VS Code's Git Graph shows them. The checked-out
+ * branch comes first, then `first` (the branch the list is narrowed to), branches, remotes, tags.
+ */
+export function groupRefs(refs, first = null) {
+  const locals = new Map(refs.filter((r) => r.kind === "head" || r.kind === "local").map((r) => [r.name, { ...r, remotes: [] }]));
+  const out = [...locals.values()];
+  for (const r of refs) {
+    if (r.kind === "remote") {
+      const slash = r.name.indexOf("/"), remote = r.name.slice(0, slash), name = r.name.slice(slash + 1);
+      const twin = locals.get(name);
+      if (twin) twin.remotes.push(remote); else out.push({ ...r, remotes: [] });
+    } else if (r.kind === "tag") out.push({ ...r, remotes: [] });
+  }
+  const rank = (r) => (r.kind === "head" ? 0 : r.name === first ? 1 : r.kind === "local" ? 2 : r.kind === "remote" ? 3 : 4);
+  return out.sort((a, b) => rank(a) - rank(b));
+}
+
+/** The commits matching a search: every word must appear in the subject, author, hash or a ref. */
+export function matches(rows, query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return rows;
+  return rows.filter((r) => {
+    const hay = `${r.subject}\n${r.author}\n${r.hash}\n${r.refs.map((x) => x.name).join("\n")}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/** Whether a batch of changed paths under the git folder `dir` touches what the graph shows:
+ *  HEAD, a ref, packed refs (the batch holding `dir` itself means anything may have changed). */
+export const refsChanged = (paths, dir) => paths.some((p) => p === dir || (!p.endsWith(".lock") && /(?:^|\/)(?:HEAD|packed-refs)$|\/refs(?:\/|$)/.test(p)));
 
 /** `git show` lines → each with the file and new-side line number it belongs to. */
 export function locate(lines) {
@@ -67,14 +104,57 @@ export default class GitGraph extends View {
     this.width = 0;
     this.scope = "all";      // "all" | "current" | a ref name
     this.remotesShown = true;
+    this.on = null;          // the machine the repository is on (null: here)
+    this.watching = null;    // { dir, pending } while watching the repository's git folder
+    this.polledAt = 0;
+    this.find = InputState.new({ placeholder: "Find commits: message, author, hash, branch" });
+    this.find.on("change", (_e, cx) => cx.notify());
     this.refresh(cx);
-    cx.timer.every(4000, (cx) => this.poll(cx));
+    // Remote repositories (no watch there) every 4s; local ones as a fallback every 30s.
+    cx.timer.every(4000, (cx) => { if (this.on || !this.watching || Date.now() - this.polledAt > 30000) this.poll(cx); });
     // A reload or crash skips close(): sweep graph files no copy has drawn for a day.
     exec("find", [`${appHome()}/data/ws-git-graph`, "-name", "graph-*.svg", "-mmin", "+1440", "-delete"]).catch(() => null);
   }
 
   async close(_cx) {
+    this.watching?.pending?.cancel();
+    this.find.release();
     if (this.graph) await exec("rm", ["-f", `${appHome()}/${this.graph.path}`]);
+  }
+
+  /** The panel copy is shown only while the panel shows the graph; a pane copy is always shown. */
+  shown() {
+    if (window()?.visible === false) return false;
+    if (props()?.pane || props()?.folder) return true;
+    const find = (node, id) => { if (node?.id === id) return node; for (const c of node?.children ?? []) { const f = find(c, id); if (f) return f; } return null; };
+    const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
+    if (!panel && !body) return true;
+    return Boolean(panel && !panel.hidden && body?.active === "ws-graph");
+  }
+
+  /** Watches the repository's git folder (here only) and redraws when its refs change. */
+  watch(cx) {
+    if (this.on || !this.root) { this.watching?.pending?.cancel(); this.watching = null; return; }
+    cx.spawn(async (cx) => {
+      const r = await this.git(["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => null);
+      const dir = r?.code === 0 ? r.stdout.trim() : null;
+      if (!dir || this.watching?.dir === dir) return;
+      this.watching?.pending?.cancel();
+      const watching = { dir, pending: null };
+      this.watching = watching;
+      try {
+        while (this.watching === watching) {
+          watching.pending = watchFolder(dir);
+          const paths = await watching.pending;
+          if (this.watching !== watching) break;
+          if (!paths.length) continue;
+          if (refsChanged(paths, dir) && this.shown() && !this.loading) this.poll(cx);
+        }
+      } catch {
+        // Too many folders watched, or the folder went: the timer polls instead.
+        if (this.watching === watching) this.watching = null;
+      }
+    });
   }
 
   target() {
@@ -88,11 +168,16 @@ export default class GitGraph extends View {
   }
 
   git(args) {
-    return exec("git", [...READ, ...args], { cwd: this.root ?? this.target() ?? undefined });
+    return exec("git", [...READ, ...args], { cwd: this.root ?? this.target() ?? undefined, on: this.on });
+  }
+
+  machine() {
+    return props()?.folder ? null : spaces().find((s) => s.active)?.machine ?? null;
   }
 
   poll(cx) {
-    if (window()?.visible === false || this.loading || !this.root) return;
+    if (!this.shown() || this.loading || !this.root) return;
+    this.polledAt = Date.now();
     const want = this.target();
     if (want && want !== this.folder) { this.refresh(cx); return; }
     cx.spawn(async (cx) => {
@@ -124,12 +209,15 @@ export default class GitGraph extends View {
     if (!rendering) cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder });
-        this.folder = folder; this.space = space;
+        const on = this.machine();
+        const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder, on });
+        this.folder = folder; this.space = space; this.on = on;
         if (top.code !== 0) { this.root = null; this.rows = []; this.error = `Not a git repository: ${folder}`; return; }
         const root = top.stdout.trim();
         if (root !== this.root) { this.selected = null; this.detail = []; this.range = null; this.scope = "all"; }
+        const moved = root !== this.root;
         this.root = root;
+        if (moved || !this.watching) this.watch(cx);
         const remotes = (await this.git(["remote"])).stdout.split("\n").filter(Boolean);
         const fmt = ["%H", "%P", "%h", "%D", "%s", "%an", "%ad"].join(SEP);
         const log = await this.git(["log", ...this.scopeArgs(), "--date-order", `--format=${fmt}`, "--date=format:%-d %b %Y %H:%M", "-n", String(LIMIT)]);
@@ -191,6 +279,8 @@ export default class GitGraph extends View {
       if (this.selected !== hash) return;
       const lines = (r.code === 0 ? r.stdout : r.stderr).replace(/\n$/, "").split("\n");
       this.detail = locate(lines.slice(0, DETAIL_LIMIT).map((l) => (l.length > 2000 ? l.slice(0, 2000) + "…" : l)));
+      // Changed words inside changed lines.
+      markWords(this.detail, (l) => (l.text.startsWith("+++") || l.text.startsWith("---") ? "" : l.text[0]), (l) => l.text.slice(1));
       if (lines.length > DETAIL_LIMIT) this.detail.push({ text: `… ${lines.length - DETAIL_LIMIT} more lines (Review shows all of it)`, file: null, line: null });
       cx.notify();
     });
@@ -236,16 +326,22 @@ export default class GitGraph extends View {
   }
 
   // A branch or tag badge in its lane's color; clicking a branch shows only that branch.
+  // The checked-out branch has a check mark; a local branch's remote twins on the same
+  // commit show as "☁ origin" inside its badge.
   badge(ref, laneColor, t, key) {
     const tag = ref.kind === "tag", remote = ref.kind === "remote", head = ref.kind === "head";
     const color = tag ? t.ansi3 : laneColor;
     const solid = head || ref.kind === "local";
-    return h_flex().id(key).flex_none().max_w(170).h(18).px(5).gap(3).items_center().rounded(4)
+    const twins = ref.remotes ?? [];
+    const tip = head ? `${ref.name}: checked out` : remote ? `${ref.name}: remote branch` : tag ? `tag ${ref.name}` : ref.name;
+    return h_flex().id(key).flex_none().max_w(200).h(18).px(5).gap(3).items_center().rounded(4)
       .border_1().border_color(color).bg(solid ? color : t.background).text_size(10.5)
       .text_color(solid ? t.background : color).when(head, (e) => e.font_semibold())
+      .tooltip(twins.length ? `${tip} · same commit as ${twins.map((r) => `${r}/${ref.name}`).join(", ")}` : tip)
       .when(!tag, (e) => e.cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); this.setScope(ref.name, cx); }))
-      .child(div().flex_none().child(tag ? "◆" : remote ? "☁" : "⎇"))
-      .child(div().min_w(0).truncate().child(ref.name));
+      .child(div().flex_none().child(tag ? "◆" : remote ? "☁" : head ? "✓" : "⎇"))
+      .child(div().min_w(0).truncate().child(ref.name))
+      .when(twins.length > 0, (e) => e.child(div().flex_none().ml(2).pl(4).border_l(1).border_color(t.background).opacity(0.8).child(`☁ ${twins.join(" ")}`)));
   }
 
   header(t) {
@@ -258,8 +354,12 @@ export default class GitGraph extends View {
       .child(h_flex().h(40).px(14).gap(8).items_center()
         .child(div().font_semibold().child(repo))
         .when(Boolean(this.branch), (e) => e.child(div().px(5).rounded(4).bg(t.raised).text_size(11).text_color(t.accent).child(`⎇ ${this.branch}`)))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : `${this.rows.length} commits${this.rows.length >= LIMIT ? " (latest)" : ""}`))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(this.loading ? "Loading…" : this.find.value().trim() ? `${matches(this.rows, this.find.value().trim()).length} of ${this.rows.length} commits` : `${this.rows.length} commits${this.rows.length >= LIMIT ? " (latest)" : ""}`))
         .child(chip("gg-refresh", "Refresh", false, (cx) => this.refresh(cx))))
+      .child(h_flex().h(34).px(12).gap(6).items_center()
+        .child(div().flex_1().min_w(0).h(26).px(8).flex().items_center().rounded(6).border_1().border_color(t.input).bg(t.background)
+          .child(Input.new(this.find).w_full().text_size(12).text_color(t.foreground)))
+        .when(Boolean(this.find.value().trim()), (e) => e.child(chip("gg-find-clear", "Clear", false, (cx) => { this.find.set_value(""); cx.notify(); }))))
       .child(h_flex().h(32).px(12).gap(6).items_center()
         .child(div().text_size(11.5).text_color(t.dim).child("Branches"))
         .child(chip("gg-all", "All", this.scope === "all", (cx) => this.setScope("all", cx)))
@@ -272,22 +372,24 @@ export default class GitGraph extends View {
   columns(t, cols) {
     const cell = (label, w) => div().flex_none().w(w).truncate().child(label);
     return h_flex().h(26).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).text_size(11).text_color(t.dim).font_semibold()
-      .child(cell("Graph", cols.graph - 10))
+      .child(cell(cols.graph >= 52 ? "Graph" : "", cols.graph - 10))
       .child(div().flex_1().min_w(0).child("Description"))
       .when(cols.date, (e) => e.child(cell("Date", 116)))
       .when(cols.author, (e) => e.child(cell("Author", 110)))
       .when(cols.commit, (e) => e.child(cell("Commit", 62)));
   }
 
-  row(r, i, t, cols, palette) {
+  row(r, i, t, cols, palette, found = false) {
     const on = r.hash === this.selected;
     const laneColor = palette[r.color % palette.length];
+    const first = this.scope !== "all" && this.scope !== "current" ? this.scope : null;
     return h_flex().id(`gg-${i}`).w_full().h(ROW).flex_none().pr(10).gap(8).items_center().cursor_pointer()
       .when(on, (e) => e.bg(t.selected)).when(!on, (e) => e.hover((s) => s.bg(t.hover)))
       .on_click((_e, cx) => this.pick(r.hash, cx))
-      .child(div().flex_none().w(cols.graph))
+      .child(div().flex_none().w(cols.graph).when(found, (e) => e.flex().items_center().justify_center()
+        .child(div().size(8).rounded(4).bg(laneColor).when(r.hash === this.head, (d) => d.border(2).border_color(t.foreground)))))
       .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-        .children(r.refs.map((ref, k) => this.badge(ref, laneColor, t, `gg-ref-${i}-${k}`)))
+        .children(groupRefs(r.refs, first).map((ref, k) => this.badge(ref, laneColor, t, `gg-ref-${i}-${k}`)))
         .child(div().flex_1().min_w(0).truncate().when(r.parents.length > 1, (e) => e.text_color(t.muted)).child(r.subject)))
       .when(cols.date, (e) => e.child(div().flex_none().w(116).truncate().text_color(t.muted).child(r.date)))
       .when(cols.author, (e) => e.child(div().flex_none().w(110).truncate().text_color(t.muted).child(r.author)))
@@ -297,7 +399,17 @@ export default class GitGraph extends View {
   detailRow(l, i, t) {
     const kind = l.text.startsWith("+++") || l.text.startsWith("---") ? "file" : l.text[0];
     const picked = this.range && i >= this.range.from && i <= this.range.to;
-    return div().id(`gd-${i}`).w_full().h(ROW - 4).flex_none().px(12).truncate().cursor_pointer()
+    if (l.words && (kind === "+" || kind === "-")) {
+      const mark = kind === "+" ? t.ansi2 + "40" : t.ansi1 + "40";
+      return h_flex().id(`gd-${i}`).w_full().min_h(ROW - 4).flex_none().px(12).flex_wrap().cursor_pointer()
+        .bg(kind === "+" ? t.ansi2 + "18" : t.ansi1 + "18").text_color(kind === "+" ? t.ansi2 : t.ansi1)
+        .when(Boolean(picked), (e) => e.bg(t.selection ?? t.selected))
+        .on_click((ev, cx) => this.selectLine(i, Boolean(ev.modifiers?.shift), cx))
+        .child(div().flex_none().child(kind))
+        .children(l.words.flatMap((w) => (w.text.match(/\s+|\S+/g) ?? []).map((text) => ({ text, changed: w.changed })))
+          .map((w, k) => div().id(`gd-${i}-${k}`).flex_none().when(w.changed, (e) => e.bg(mark)).child(w.text)));
+    }
+    return div().id(`gd-${i}`).w_full().min_h(ROW - 4).flex_none().px(12).whitespace_normal().cursor_pointer()
       .when(kind === "+", (e) => e.bg(t.ansi2 + "18").text_color(t.ansi2))
       .when(kind === "-", (e) => e.bg(t.ansi1 + "18").text_color(t.ansi1))
       .when(kind === "@", (e) => e.bg(t.raised).text_color(t.dim))
@@ -321,17 +433,25 @@ export default class GitGraph extends View {
     const graphW = Math.max(36, this.graph?.width ?? 36);
     // Columns drop as the panel narrows: Commit, then Author, then Date.
     const cols = { graph: graphW, date: this.width >= 560, author: this.width >= 700, commit: this.width >= 800 };
-    const top = 40 + 32 + 26 + 3;
+    const top = 40 + 32 + 34 + 26 + 3;
+    const query = this.find.value().trim();
+    const shownRows = query ? matches(this.rows, query) : this.rows;
     const body = Math.max(0, this.height - top);
     const detailH = this.selected ? Math.floor(body * 0.5) : 0;
     const listH = Math.max(ROW, body - detailH);
     const list = this.error && !this.rows.length
       ? div().p(16).text_color(t.dim).child(this.error)
-      : div().id("gg-list").w_full().h(listH).flex_none().overflow_y_scrollbar().text_size(12.5)
-        .child(div().relative().w_full().h(this.rows.length * ROW)
-          .child(v_flex().w_full().children(this.rows.map((r, i) => this.row(r, i, t, cols, palette))))
-          // The lanes, drawn once as an SVG over the rows' empty graph column.
-          .when(Boolean(this.graph), (e) => e.child(image(this.graph.path).absolute().left(0).top(0).w(this.graph.width).h(this.graph.height))));
+      : query
+        // Found commits: a dot in each one's lane color instead of the lanes.
+        ? div().id("gg-found").w_full().h(listH).flex_none().overflow_y_scrollbar().text_size(12.5)
+          .child(v_flex().w_full()
+            .when(shownRows.length === 0, (e) => e.child(div().p(16).text_color(t.dim).child(`No commit matches "${query}" (of the ${this.rows.length} shown)`)))
+            .children(shownRows.map((r, i) => this.row(r, i, t, cols, palette, true))))
+        : div().id("gg-list").w_full().h(listH).flex_none().overflow_y_scrollbar().text_size(12.5)
+          .child(div().relative().w_full().h(this.rows.length * ROW)
+            .child(v_flex().w_full().children(this.rows.map((r, i) => this.row(r, i, t, cols, palette))))
+            // The lanes, drawn once as an SVG over the rows' empty graph column.
+            .when(Boolean(this.graph), (e) => e.child(image(this.graph.path).absolute().left(0).top(0).w(this.graph.width).h(this.graph.height))));
     const lines = this.range ? this.range.to - this.range.from + 1 : 0;
     const row = this.rows.find((r) => r.hash === this.selected);
     const detail = this.selected

@@ -4,7 +4,7 @@
 // when it opened, so a review's Send goes to that agent.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, agents, focused, panes, props, closeOverlay, notify, theme, run, pickFiles, setShared } from "herdr";
+import { exec, agents, focused, panes, props, closeOverlay, notify, theme, run, pickFiles, setShared, shared } from "herdr";
 
 // Each item: key, label, hint, and what it does with the target terminal.
 const ITEMS = [
@@ -17,6 +17,7 @@ const ITEMS = [
   { key: "c", label: "Comments", hint: "the tray: send your comments to the agent", act: "comments" },
   { key: "m", label: "Preview Markdown…", hint: "live preview beside this pane", act: "preview" },
   { key: "u", label: "Refresh usage limits", hint: "Claude and Codex", act: "usage" },
+  { key: "n", label: "System notifications on/off", hint: "when an agent needs you or finishes while Herdr is behind", act: "alerts" },
 ];
 
 export default class WsMenu extends View {
@@ -87,6 +88,12 @@ export default class WsMenu extends View {
             break;
           }
           case "usage": setShared("usage-limits.refresh", Date.now()); break;
+          case "alerts": {
+            const on = /** @type {any} */ (shared("ws.alerts"))?.system !== false;
+            setShared("ws.alerts", { system: !on });
+            notify({ title: `System notifications ${on ? "off" : "on"}`, level: "info", timeout: 2000 });
+            break;
+          }
         }
       } finally {
         this.close();

@@ -137,6 +137,16 @@ done < "$MANIFEST.new"
 mv "$MANIFEST.new" "$MANIFEST"
 [ "$FAILED" = 0 ] || die "a mod failed its check (see above)"
 
+# ---------- 6b. forks ----------
+# ws-tabs, ws-files, ... are copies of Herdr's own mods: say when Herdr has changed those since.
+if [ -x "$SRC/scripts/forks.sh" ]; then
+  out="$(HERDR_APP_HOME="$APP_HOME" "$SRC/scripts/forks.sh" --quiet 2>/dev/null || true)"
+  if [ -n "$out" ]; then
+    warn "Herdr has changed mods the Workstation copies; those copies lack Herdr's newest changes until they're merged:"
+    echo "$out" | sed 's/^/  /' >&2
+  fi
+fi
+
 # ---------- 7. show it ----------
 if [ "$SWITCH" = 1 ] && herdr-app status >/dev/null 2>&1; then
   herdr-app do layout.switch --name workstation >/dev/null && say "Switched to the Workstation layout"

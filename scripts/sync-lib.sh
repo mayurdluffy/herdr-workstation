@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 # Herdr mods can't import from each other's folders, so lib/*.js is copied into
 # every mod that uses it. Edit lib/, then run this (install.sh runs it too).
+#   scripts/sync-lib.sh --check   only report stale copies (exit 1 if any)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-for mod in ws-comment ws-comments; do cp lib/comments.js "mods/$mod/comments.js"; done
-for mod in ws-review ws-git; do cp lib/git-actions.js "mods/$mod/git-actions.js"; done
-for mod in ws-spaces ws-picker; do cp lib/space-look.js "mods/$mod/space-look.js"; done
+CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
+stale=0
+copy() { # lib file, mods...
+  local src="lib/$1"; shift
+  for mod in "$@"; do
+    local dst="mods/$mod/$(basename "$src")"
+    if [ "$CHECK" = 1 ]; then cmp -s "$src" "$dst" || { echo "stale: $dst (run scripts/sync-lib.sh)"; stale=1; }
+    else cp "$src" "$dst"; fi
+  done
+}
+copy comments.js ws-comment ws-comments ws-activity
+copy git-actions.js ws-review ws-git
+copy space-look.js ws-spaces ws-picker
+copy diff-words.js ws-review ws-git-graph
+exit "$stale"

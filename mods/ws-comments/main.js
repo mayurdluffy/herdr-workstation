@@ -1,10 +1,13 @@
 // @ts-check
 // The comment tray (panel): every comment waiting to go to an agent, grouped by
-// agent, the current tab's agent first. Send one, send all, copy, or drop them.
+// agent, the current tab's agent first. Send one, send all, copy, edit, or drop them.
+// Sending to a busy agent (working, or waiting on a question) queues the comments: they
+// go when it stops (ws-activity sends them), or now with Send now. Move to… gives
+// comments to another agent, for one whose terminal is gone.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { theme, settings, notify, run, exec } from "herdr";
-import { comments, removeComments, currentAgent, agentLabel, send, format } from "./comments.js";
+import { theme, settings, notify, run, exec, agents, openOverlay } from "herdr";
+import { comments, removeComments, updateComments, currentAgent, agentLabel, agentStatus, send, format } from "./comments.js";
 
 const SOURCE = { file: "File", markdown: "Markdown", diff: "Change", commit: "Commit", terminal: "Terminal" };
 
@@ -12,20 +15,33 @@ export default class Comments extends View {
   init(_props, _cx) {
     this.busy = null;   // agent address being sent to
     this.error = null;
+    this.moving = null; // agent whose comments are being moved: the list of agents shows
   }
 
-  sendTo(agent, list, cx) {
+  sendTo(agent, list, cx, now = false) {
     if (this.busy) return;
     this.busy = agent;
     this.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      const err = await send(agent, list);
+      const err = await send(agent, list, { now });
       this.busy = null;
-      if (err) this.error = `${agentLabel(agent)}: ${err}`;
+      if (err === "queued") notify({ title: `Queued ${list.length} comment${list.length === 1 ? "" : "s"}`, body: `${agentLabel(agent)} is busy: they go when it stops.`, level: "info", timeout: 3000 });
+      else if (err) this.error = `${agentLabel(agent)}: ${err}`;
       else notify({ title: `Sent ${list.length} comment${list.length === 1 ? "" : "s"}`, body: agentLabel(agent), level: "success", timeout: 2500 });
       cx.notify();
     });
+  }
+
+  moveTo(from, to, list, cx) {
+    updateComments(list.map((c) => c.id), { agent: to, queued: false });
+    this.moving = null;
+    notify({ title: `Moved ${list.length} comment${list.length === 1 ? "" : "s"}`, body: `to ${agentLabel(to)}`, level: "success", timeout: 2500 });
+    cx.notify();
+  }
+
+  edit(c) {
+    openOverlay({ mod: "ws-comment", kind: "dialog", width: 560, props: { edit: c.id } });
   }
 
   copy(list, cx) {
@@ -48,7 +64,9 @@ export default class Comments extends View {
       .child(h_flex().gap(6).items_center()
         .child(div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t.accent).child(SOURCE[c.source] ?? c.source))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(c.where))
-        .child(this.small(`wc-send-${c.id}`, "Send", (cx) => this.sendTo(c.agent, [c], cx), t))
+        .when(Boolean(c.queued), (e) => e.child(div().flex_none().px(5).rounded(4).bg(t.raised).text_size(10.5).text_color(t.working ?? t.muted).child("queued")))
+        .child(this.small(`wc-edit-${c.id}`, "Edit", () => this.edit(c), t))
+        .child(this.small(`wc-send-${c.id}`, c.queued ? "Send now" : "Send", (cx) => this.sendTo(c.agent, [c], cx, Boolean(c.queued)), t))
         .child(this.small(`wc-del-${c.id}`, "✕", () => removeComments([c.id]), t)))
       .when(Boolean(quote.trim()), (e) => e.child(div().pl(8).border_l(2).border_color(t.border).font_family(mono).text_size(11.5).text_color(t.muted).child(quote)))
       .when(Boolean(c.note.trim()), (e) => e.child(div().text_size(12.5).child(c.note)));
@@ -56,16 +74,31 @@ export default class Comments extends View {
 
   group(agent, list, current, t, mono) {
     const busy = this.busy === agent;
+    const status = agentStatus(agent);
+    const gone = status === null;
+    const queued = list.some((c) => c.queued);
+    const others = agents().filter((a) => a.address !== agent);
+    const state = gone ? "terminal gone" : status === "working" ? "working" : status === "blocked" ? "needs you" : null;
+    const sendLabel = busy ? "Sending…" : queued ? "Send now" : status === "working" || status === "blocked" ? `Queue ${list.length === 1 ? "comment" : `all ${list.length}`}` : list.length === 1 ? "Send comment" : `Send all ${list.length}`;
     return v_flex().gap(8)
       .child(h_flex().gap(6).items_center()
-        .child(div().size(7).rounded(4).flex_none().bg(current ? t.accent : t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().child(agentLabel(agent))))
+        .child(div().size(7).rounded(4).flex_none().bg(gone ? t.ansi1 : current ? t.accent : t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().when(gone, (e) => e.text_color(t.dim)).child(agentLabel(agent)))
+        .when(Boolean(state), (e) => e.child(div().flex_none().text_size(11).text_color(gone ? t.ansi1 : status === "blocked" ? t.blocked : t.working ?? t.muted).child(state)))
+        .when(others.length > 0, (e) => e.child(this.small(`wc-move-${agent}`, this.moving === agent ? "Cancel" : "Move to…", (cx) => { this.moving = this.moving === agent ? null : agent; cx.notify(); }, t))))
+      .when(this.moving === agent, (e) => e.child(v_flex().p(4).gap(1).rounded(8).border_1().border_color(t.border).bg(t.surface)
+        .children(others.map((a) => h_flex().id(`wc-to-${agent}-${a.address}`).h(26).px(8).gap(6).items_center().rounded(5).cursor_pointer()
+          .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.moveTo(agent, a.address, list, cx))
+          .child(div().flex_1().min_w(0).truncate().text_size(12).child(agentLabel(a.address)))
+          .child(div().flex_none().text_size(10.5).text_color(t.dim).child(a.status))))))
       .children(list.map((c) => this.card(c, t, mono)))
+      .when(queued, (e) => e.child(div().text_size(11.5).text_color(t.dim).child("Queued: these go by themselves when the agent stops working.")))
       .child(h_flex().gap(8).items_center()
-        .child(div().id(`wc-all-${agent}`).flex_1().h(30).flex().items_center().justify_center().rounded(7).cursor_pointer()
-          .bg(t.solid).text_color(t.solid_foreground).text_size(12.5)
-          .on_click((_e, cx) => this.sendTo(agent, list, cx))
-          .child(busy ? "Sending…" : list.length === 1 ? "Send comment" : `Send all ${list.length}`))
+        .child(div().id(`wc-all-${agent}`).flex_1().h(30).flex().items_center().justify_center().rounded(7)
+          .when(!gone, (e) => e.cursor_pointer().bg(t.solid).text_color(t.solid_foreground).on_click((_e, cx) => this.sendTo(agent, list, cx, queued)))
+          .when(gone, (e) => e.bg(t.raised).text_color(t.dim))
+          .text_size(12.5)
+          .child(gone ? "Agent gone: Move to…" : sendLabel))
         .child(this.small(`wc-copy-${agent}`, "Copy", (cx) => this.copy(list, cx), t))
         .child(this.small(`wc-clear-${agent}`, "Clear", () => removeComments(list.map((c) => c.id)), t)));
   }

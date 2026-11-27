@@ -1,0 +1,10 @@
+{
+  "name": "herdr-workstation",
+  "private": true,
+  "type": "module",
+  "description": "Not a package: lets `node --test` load the mods' ES modules.",
+  "scripts": {
+    "test": "node --import ./test/register.js --test test/*.test.js"
+  },
+  "engines": { "node": ">=22.15" }
+}
