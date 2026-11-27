@@ -163,6 +163,13 @@
                       "content": {
                         "mod": "ws-comments"
                       }
+                    },
+                    {
+                      "id": "ws-prs",
+                      "type": "block",
+                      "content": {
+                        "mod": "ws-prs"
+                      }
                     }
                   ]
                 }

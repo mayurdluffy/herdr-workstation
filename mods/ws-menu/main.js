@@ -13,6 +13,7 @@ const ITEMS = [
   { key: "l", label: "Review the agent's last reply", hint: "annotate it and send feedback", act: "last" },
   { key: "d", label: "Annotate docs in this folder", hint: "Markdown tree with comments", act: "docs" },
   { key: "a", label: "Approve a plan…", hint: "pick a Markdown file: Approve or send feedback", act: "gate" },
+  { key: "o", label: "Pull requests", hint: "review, comment, approve and merge PRs and MRs", act: "prs" },
   { key: "g", label: "Git graph", hint: "branches and commits, in the side panel", act: "graph" },
   { key: "c", label: "Comments", hint: "the tray: send your comments to the agent", act: "comments" },
   { key: "m", label: "Preview Markdown…", hint: "live preview beside this pane", act: "preview" },
@@ -76,6 +77,10 @@ export default class WsMenu extends View {
           }
           case "graph":
             run("layout.select", { stack: "panel-body", child: "ws-graph" });
+            run("layout.show", { id: "panel" });
+            break;
+          case "prs":
+            run("layout.select", { stack: "panel-body", child: "ws-prs" });
             run("layout.show", { id: "panel" });
             break;
           case "comments":

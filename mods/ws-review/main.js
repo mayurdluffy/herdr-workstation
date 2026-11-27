@@ -15,7 +15,8 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, ScrollHandle } from "gpui-base";
 import { exec, theme, settings, focused, panes, spaces, agents, layout, window, notify, openOverlay, appHome, writeTextFile, readTextFile, shared, setShared, run } from "herdr";
 import { REQUEST, CLAIM, LOG, MENU, post, view, openDialog, moreMenu, commitMenu, menuSize, commitOptions, planCommit, pushSteps } from "./git-actions.js";
-import { markWords, sideBySide } from "./diff-words.js";
+import { markWords, sideBySide, parseDiff } from "./diff-words.js";
+export { parseDiff };
 
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "color.ui=never"];
 const ROW = 20;
@@ -69,33 +70,6 @@ export function parseBranch(out) {
   info.branch = branch;
   info.upstream = upstream && !gone ? upstream : null;
   return info;
-}
-
-/** A diff as rows: header lines, hunks and { kind, text, oldN, newN, hunk }. */
-export function parseDiff(text) {
-  const all = text.replace(/\n$/, "").split("\n");
-  const first = all.findIndex((l) => l.startsWith("@@"));
-  const header = first < 0 ? all : all.slice(0, first);
-  const hunks = [], rows = [];
-  let hunk = null, oldN = 0, newN = 0;
-  for (const line of first < 0 ? [] : all.slice(first)) {
-    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
-    if (m) {
-      hunk = { header: line, lines: [], index: hunks.length };
-      hunks.push(hunk);
-      oldN = +m[1]; newN = +m[2];
-      rows.push({ kind: "@", text: line, hunk: hunk.index });
-      continue;
-    }
-    if (!hunk) continue;
-    hunk.lines.push(line);
-    const kind = line[0];
-    if (kind === "+") rows.push({ kind, text: line.slice(1), newN: newN++, hunk: hunk.index });
-    else if (kind === "-") rows.push({ kind, text: line.slice(1), oldN: oldN++, newN, hunk: hunk.index });
-    else if (kind === " ") rows.push({ kind, text: line.slice(1), oldN: oldN++, newN: newN++, hunk: hunk.index });
-    else rows.push({ kind: "\\", text: line, hunk: hunk.index });
-  }
-  return { header, hunks, rows };
 }
 
 /** Context for a whole-file diff: more lines than any file shown here has. */

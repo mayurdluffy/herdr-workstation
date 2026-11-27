@@ -1,5 +1,5 @@
 // Workstation tab bar: Herdr's shipped `tabs` mod (Apache-2.0) plus the Graph
-// and Comments panel buttons; our Changes (ws-review, Source Control with Stage/Unstage)
+// and Comments panel buttons; our Changes (ws-review, Source Control with Stage/Unstage), PRs (ws-prs)
 // replaces Herdr's own Changes panel. Only the marked parts differ.
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
@@ -16,7 +16,7 @@ function find(node, id) {
 
 // WS: our panels, always offered beside Herdr's own. Every panel opens at the width the
 // person last gave the panel: none of them resizes it.
-const WS_PANELS = ["ws-graph", "ws-review", "ws-comments"];
+const WS_PANELS = ["ws-graph", "ws-review", "ws-prs", "ws-comments"];
 
 // Same as the agents mod: drops a status glyph, keeps a leading bracket or quote.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
@@ -139,6 +139,7 @@ export default class Tabs extends View {
     // WS: Herdr's Changes is replaced by ours, so it is never restored or offered.
     const enabled = [...(shared("workspace.panels") ?? ["files"]).filter((p) => p !== "changes"), ...WS_PANELS];
     const waiting = (() => { const c = shared("ws.comments"); return Array.isArray(c) ? c.length : 0; })();
+    const toReview = Number(shared("ws.prs.waiting")) || 0; // WS: PRs waiting on your review
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon, badge = 0) => {
       const on = panel && !panel.hidden && body?.active === id;
@@ -163,6 +164,7 @@ export default class Tabs extends View {
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .child(panelButton("ws-review", "Changes", "mods/changes/changes.svg"))
       .child(panelButton("ws-graph", "Graph", "mods/ws-tabs/icons/graph.svg"))
+      .child(panelButton("ws-prs", "PRs", "mods/ws-tabs/icons/pr.svg", toReview))
       .child(panelButton("ws-comments", "Comments", "mods/ws-tabs/icons/comments.svg", waiting))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))

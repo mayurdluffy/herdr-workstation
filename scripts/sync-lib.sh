@@ -14,8 +14,8 @@ copy() { # lib file, mods...
     else cp "$src" "$dst"; fi
   done
 }
-copy comments.js ws-comment ws-comments ws-activity
+copy comments.js ws-comment ws-comments ws-activity ws-prs
 copy git-actions.js ws-review ws-git
 copy space-look.js ws-spaces ws-picker
-copy diff-words.js ws-review ws-git-graph
+copy diff-words.js ws-review ws-git-graph ws-prs
 exit "$stale"

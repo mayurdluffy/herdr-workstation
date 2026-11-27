@@ -9,7 +9,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme, settings, notify, run, exec, agents, openOverlay } from "herdr";
 import { comments, removeComments, updateComments, currentAgent, agentLabel, agentStatus, send, format } from "./comments.js";
 
-const SOURCE = { file: "File", markdown: "Markdown", diff: "Change", commit: "Commit", terminal: "Terminal" };
+const SOURCE = { file: "File", markdown: "Markdown", diff: "Change", commit: "Commit", terminal: "Terminal", pr: "PR" };
 
 export default class Comments extends View {
   init(_props, _cx) {

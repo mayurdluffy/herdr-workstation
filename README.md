@@ -13,7 +13,8 @@ limits in the status bar.
 curl -fsSL https://raw.githubusercontent.com/mayurdluffy/herdr-workstation/main/install.sh | bash
 ```
 
-Needs Herdr desktop (started once), `git`, `curl` and `python3`. macOS or Linux.
+Needs Herdr desktop (started once), `git`, `curl` and `python3`. macOS or Linux. The PRs panel uses
+`gh` (GitHub) or `glab` (GitLab), signed in (`gh auth login`, `glab auth login`).
 Run the same command again to update. Options (after `bash -s --`):
 
 | Option | Skips |
@@ -24,7 +25,7 @@ Uninstall: `bash ~/.local/share/herdr-workstation/uninstall.sh` (it also clears 
 
 ## What you get
 
-The tab bar has four panels: **Files**, **Changes**, **Graph** and **Comments**
+The tab bar has five panels: **Files**, **Changes**, **Graph**, **PRs** and **Comments**
 (our Changes, Source Control with Stage/Unstage, replaces Herdr's own). Each remembers, per space, whether it was open.
 
 ### Comment on anything, send it as one message
@@ -52,6 +53,16 @@ If an agent's terminal is gone, **Move to…** gives its comments to another age
 - Diffs show the **Whole file** with its changes in place, as VS Code does (or only the hunks), wrap
   long lines, mark the changed words in a changed line, show **Inline** or **Side by side**, and
   **Show all** past 2,000 lines. The hunk actions still act on just that hunk.
+- **PRs**: pull requests (GitHub, through `gh`) and merge requests (GitLab, through `glab`), handled
+  start to merge without a browser. The list shows this repository's, those **To review** (waiting on you,
+  everywhere; the PRs button's badge counts them) or **Mine**, open or closed, with checks and review state.
+  A PR's page: **Conversation** (description, reviews, comments, unresolved threads, a comment box),
+  **Files** (each diff with its review threads in place: Reply, Resolve, To agent; click a line, shift-click
+  another, **Comment**: add it to your review, post it now, or give it to the agent) and **Checks** (open one,
+  **Re-run failed**). Below: **Review** (Comment, Approve or Request changes, with your line comments),
+  **Merge** (squash, merge commit or rebase, delete the branch; or **Merge when ready**), **Checkout** (in the
+  focused clone) and **More…** (ask the agent to review it, unresolved threads to the agent, ready/draft,
+  close/reopen, open in the browser, copy link). Key commands: `ws-prs:repo|review|mine|open|closed|first|back|conversation|files|checks`.
 - **Graph**: every branch's commits with refs; click one for its diff, **Review** it in plannotator.
   **Find** narrows it to commits by message, author, hash or branch. The checked-out branch has a ✓,
   and a branch and its remote twin on the same commit are one badge (`main ☁ origin`). It redraws when
@@ -69,7 +80,7 @@ If an agent's terminal is gone, **Move to…** gives its comments to another age
 | Key (macOS / Linux) | Does |
 |---|---|
 | `cmd-p` | Go to… (the sidebar's search too): spaces with their blobs, tabs by their agent's title and state |
-| `cmd-shift-k` / `ctrl-alt-k` | Workstation menu: review, last reply, docs, approve a plan, graph, Markdown, comments, usage, notifications |
+| `cmd-shift-k` / `ctrl-alt-k` | Workstation menu: review, last reply, docs, approve a plan, pull requests, graph, Markdown, comments, usage, notifications |
 | `cmd-shift-m` / `ctrl-alt-m` | Comment on the terminal selection |
 | `cmd-shift-g` / `ctrl-alt-g` | Git graph as a pane beside the focused one |
 | Ctrl/Cmd-click a `.md` path | Live Markdown preview beside that pane |

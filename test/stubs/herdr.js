@@ -41,7 +41,7 @@ export const home = () => process.env.HOME ?? "/";
 export const appHome = () => `${process.env.HOME ?? ""}/.config/herdr-app`;
 export const checking = () => true;
 export const readTextFile = async () => null;
-export const writeTextFile = async () => null;
+export const writeTextFile = async (path, text) => { const fs = await import("node:fs/promises"); await fs.writeFile(path, text); return null; };
 export const watchFolder = () => Object.assign(new Promise(() => {}), { cancel() {} });
 export const pickFiles = async () => null;
 export const pickFolder = async () => null;
